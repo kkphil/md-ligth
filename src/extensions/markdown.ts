@@ -4,6 +4,7 @@
  * typing [text](url) to make a link.
  */
 import remarkFrontmatter from 'remark-frontmatter'
+import { remarkHighlight } from '../remark-highlight'
 import { remarkStringifyOptionsCtx } from '@milkdown/kit/core'
 import type { Ctx } from '@milkdown/kit/ctx'
 import { linkSchema } from '@milkdown/kit/preset/commonmark'
@@ -15,45 +16,6 @@ import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/
 import { $inputRule, $markSchema, $nodeSchema, $prose, $remark } from '@milkdown/kit/utils'
 
 // ---------------------------------------------------------------- ==highlight==
-
-type MdNode = { type: string; value?: string; children?: MdNode[] }
-const SKIP = new Set(['code', 'inlineCode', 'inlineMath', 'math', 'html', 'yaml'])
-const HIGHLIGHT = /==(?=\S)([^=\n]*?\S)==/g
-
-/** remark plugin: parses `==text==` into `highlight` nodes and prints them back. */
-function remarkHighlight(this: { data(): Record<string, unknown[]> }) {
-  const data = this.data()
-  ;(data.toMarkdownExtensions ??= []).push({
-    handlers: {
-      highlight(node: MdNode, _parent: unknown, state: any, info: any) {
-        const exit = state.enter('highlight')
-        const value = state.containerPhrasing(node, { ...info, before: '=', after: '=' })
-        exit()
-        return `==${value}==`
-      },
-    },
-  })
-
-  const split = (node: MdNode): MdNode[] => {
-    if (node.type !== 'text' || !node.value?.includes('==')) return [node]
-    const out: MdNode[] = []
-    let last = 0
-    for (const m of node.value.matchAll(HIGHLIGHT)) {
-      if (m.index! > last) out.push({ type: 'text', value: node.value.slice(last, m.index) })
-      out.push({ type: 'highlight', children: [{ type: 'text', value: m[1] }] })
-      last = m.index! + m[0].length
-    }
-    if (!out.length) return [node]
-    if (last < node.value.length) out.push({ type: 'text', value: node.value.slice(last) })
-    return out
-  }
-  const walk = (node: MdNode) => {
-    if (!node.children || SKIP.has(node.type)) return
-    node.children = node.children.flatMap(split)
-    node.children.forEach(walk)
-  }
-  return (tree: MdNode) => walk(tree)
-}
 
 export const remarkHighlightPlugin = $remark('remarkHighlight', () => remarkHighlight as never)
 

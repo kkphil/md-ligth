@@ -9,12 +9,19 @@
     "tauri": "tauri",
     "app:dev": "tauri dev",
     "app:build": "tauri build",
-    "app:install": "tauri build --bundles app && rm -rf /Applications/md-light.app && cp -R src-tauri/target/release/bundle/macos/md-light.app /Applications/ && open /Applications/md-light.app"
+    "app:install": "bash scripts/install-macos.sh"
   },
   "license": "MIT",
   "devDependencies": {
     "@tauri-apps/cli": "^2.12.3",
+    "rehype-highlight": "^7.0.2",
+    "rehype-katex": "^7.0.1",
+    "rehype-stringify": "^10.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
     "typescript": "^7.0.2",
+    "unified": "^11.0.5",
     "vite": "^8.3.5"
   },
   "dependencies": {
