@@ -1,8 +1,9 @@
-import { Editor, editorViewCtx, remarkStringifyOptionsCtx, rootCtx } from '@milkdown/kit/core'
+import { Editor, editorViewCtx, rootCtx } from '@milkdown/kit/core'
 import type { Ctx } from '@milkdown/kit/ctx'
 import {
   commonmark,
   createCodeBlockCommand,
+  remarkPreserveEmptyLinePlugin,
   imageSchema,
   insertHrCommand,
   toggleEmphasisCommand,
@@ -28,11 +29,17 @@ import { clipboard } from '@milkdown/kit/plugin/clipboard'
 import { indent } from '@milkdown/kit/plugin/indent'
 import { trailing } from '@milkdown/kit/plugin/trailing'
 import { cursor } from '@milkdown/kit/plugin/cursor'
+import { toggleMark } from '@milkdown/kit/prose/commands'
 import { keymap } from '@milkdown/kit/prose/keymap'
-import type { Node as PMNode, Schema } from '@milkdown/kit/prose/model'
-import { Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state'
-import { Decoration, DecorationSet } from '@milkdown/kit/prose/view'
+import type { Node as PMNode, Schema, Slice } from '@milkdown/kit/prose/model'
+import { Plugin, PluginKey, Selection, TextSelection } from '@milkdown/kit/prose/state'
+import { Decoration, DecorationSet, type EditorView } from '@milkdown/kit/prose/view'
 import { $prose, $view, callCommand, getMarkdown, replaceAll } from '@milkdown/kit/utils'
+import { code, configurePrism } from './extensions/code'
+import { configureSerializer, frontMatterValue, markdownExtras } from './extensions/markdown'
+import { insertMathBlock, insertMathInline, math } from './extensions/math'
+import { linkEditor, slashMenu } from './extensions/popups'
+import { IMAGE_EXT } from './images'
 
 export interface EditorOptions {
   /** Called after every document change. */
@@ -41,12 +48,25 @@ export interface EditorOptions {
   resolveImage: (src: string) => string
   /** Opens a link the user ⌘/Ctrl-clicked. */
   openLink: (href: string) => void
+  /** A command picked from the `/` menu. */
+  onCommand: (id: string) => void
+  /** Image files pasted or dropped (browser drop / clipboard bitmaps). */
+  onImageFiles: (files: File[], pos: number) => void
+  /** Pasted content brought along images from the web. */
+  onPastedImageUrls: (urls: string[]) => void
 }
 
 export type BlockCommand =
   | 'h1' | 'h2' | 'h3' | 'h4' | 'h5' | 'h6' | 'paragraph'
-  | 'quote' | 'bullet_list' | 'ordered_list' | 'code_block' | 'hr' | 'table'
-export type InlineCommand = 'bold' | 'italic' | 'code' | 'strike'
+  | 'quote' | 'bullet_list' | 'ordered_list' | 'task_list' | 'code_block' | 'hr' | 'table'
+  | 'math_block' | 'callout' | 'toc' | 'mermaid' | 'front_matter'
+export type InlineCommand = 'bold' | 'italic' | 'code' | 'strike' | 'highlight' | 'math_inline' | 'link'
+
+export const BLOCK_COMMANDS: readonly string[] = [
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'quote', 'bullet_list', 'ordered_list', 'task_list',
+  'code_block', 'hr', 'table', 'math_block', 'callout', 'toc', 'mermaid', 'front_matter',
+]
+export const INLINE_COMMANDS: readonly string[] = ['bold', 'italic', 'code', 'strike', 'highlight', 'math_inline', 'link']
 
 /**
  * Typora shows the `#` markers of the heading the caret is in.
@@ -84,7 +104,7 @@ const placeholder = $prose(() => new Plugin({
       const empty = doc.childCount === 1 && first?.type.name === 'paragraph' && first.content.size === 0
       if (!empty) return null
       return DecorationSet.create(doc, [
-        Decoration.node(0, first.nodeSize, { class: 'is-empty', 'data-placeholder': 'Start writing…' }),
+        Decoration.node(0, first.nodeSize, { class: 'is-empty', 'data-placeholder': 'Start writing… (type / for commands)' }),
       ])
     },
   },
@@ -166,13 +186,49 @@ const taskToggle = $prose(() => new Plugin({
   },
 }))
 
+const imageFiles = (list: FileList | undefined | null) =>
+  [...(list ?? [])].filter((f) => f.type.startsWith('image/') || IMAGE_EXT.test(f.name))
+
+function collectImageUrls(slice: Slice) {
+  const urls: string[] = []
+  slice.content.descendants((node) => {
+    if (node.type.name === 'image' && /^https?:\/\//i.test(node.attrs.src)) urls.push(node.attrs.src)
+  })
+  return urls
+}
+
+/** Collapses runs of blank lines (left by empty paragraphs) outside code and math fences. */
+function tidyMarkdown(md: string) {
+  const out: string[] = []
+  let fence: string | null = null
+  let blank = 0
+  for (const line of md.split('\n')) {
+    const trimmed = line.trim()
+    if (fence) {
+      out.push(line)
+      if (trimmed.startsWith(fence) && trimmed.replace(/[`~$]/g, '') === '') fence = null
+      continue
+    }
+    const open = /^(`{3,}|~{3,})/.exec(trimmed)?.[1] ?? (trimmed === '$$' ? '$$' : null)
+    if (open) fence = open
+    if (trimmed === '') {
+      if (++blank > 1) continue
+    } else {
+      blank = 0
+    }
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
 export async function createEditor(root: HTMLElement, opts: EditorOptions) {
   // Resolves relative image paths against the open file's directory.
   const imageView = $view(imageSchema.node, () => (initial) => {
     const dom = document.createElement('img')
     let current: PMNode = initial
     const render = (node: PMNode) => {
-      dom.src = opts.resolveImage(node.attrs.src)
+      const src = opts.resolveImage(node.attrs.src)
+      if (dom.getAttribute('src') !== src) dom.src = src
       dom.alt = node.attrs.alt
       if (node.attrs.title) dom.title = node.attrs.title
       else dom.removeAttribute('title')
@@ -189,9 +245,9 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
     }
   })
 
-  // ⌘/Ctrl-click opens links (a plain click just places the caret, like Typora).
-  const linkClick = $prose(() => new Plugin({
-    key: new PluginKey('mdl-link-click'),
+  // ⌘/Ctrl-click opens links; pasted/dropped images go through the image rules.
+  const interactions = $prose(() => new Plugin({
+    key: new PluginKey('mdl-interactions'),
     props: {
       handleDOMEvents: {
         click: (_view, event) => {
@@ -203,17 +259,45 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
           return true
         },
       },
+      handlePaste(view, event) {
+        const data = event.clipboardData
+        const files = imageFiles(data?.files)
+        // Screenshots and copied image files; pasted web content keeps its own handling.
+        if (!files.length || data?.getData('text/html') || data?.getData('text/plain')) return false
+        event.preventDefault()
+        opts.onImageFiles(files, view.state.selection.from)
+        return true
+      },
+      handleDrop(view, event) {
+        const files = imageFiles((event as DragEvent).dataTransfer?.files)
+        if (!files.length) return false
+        event.preventDefault()
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.from
+        opts.onImageFiles(files, pos)
+        return true
+      },
+      transformPasted(slice) {
+        const urls = collectImageUrls(slice)
+        if (urls.length) setTimeout(() => opts.onPastedImageUrls(urls))
+        return slice
+      },
     },
   }))
+
+  const links = linkEditor(opts.openLink)
 
   const editor = await Editor.make()
     .config((ctx) => {
       ctx.set(rootCtx, root)
-      // `-` bullets, like most hand-written Markdown.
-      ctx.update(remarkStringifyOptionsCtx, (prev) => ({ ...prev, bullet: '-' as const }))
+      configureSerializer(ctx)
+      configurePrism(ctx)
     })
-    .use(commonmark)
+    // Empty lines are just spacing, not `<br />` in the file.
+    .use(commonmark.filter((plugin) => !(remarkPreserveEmptyLinePlugin as unknown[]).includes(plugin)))
     .use(gfm)
+    .use(math)
+    .use(markdownExtras)
+    .use(code)
     .use(history)
     .use(clipboard)
     .use(indent)
@@ -225,31 +309,37 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
     .use(headingHint)
     .use(placeholder)
     .use(imageView)
-    .use(linkClick)
+    .use(interactions)
+    .use(links.plugin)
+    .use(slashMenu(opts.onCommand))
     .create()
 
-  const view = () => editor.action((ctx: Ctx) => ctx.get(editorViewCtx))
+  const view = (): EditorView => editor.action((ctx: Ctx) => ctx.get(editorViewCtx))
   let cleanDoc = view().state.doc
 
   const call = <T>(key: Parameters<typeof callCommand>[0], payload?: T) =>
     editor.action(callCommand(key as never, payload as never))
 
-  const insertTable = () => editor.action((ctx) => {
-    const v = ctx.get(editorViewCtx)
+  /** Replaces the caret's empty block with `node`, or inserts it after the current block. */
+  const insertBlock = (node: PMNode, caretOffset = 1) => {
+    const v = view()
     const { state } = v
-    const table = buildTable(ctx, state.schema, ['', ''])
     const { $from } = state.selection
-    // Replace the current block if it is an empty paragraph, otherwise insert below it.
-    const block = $from.node(1)
-    const emptyPara = block?.type.name === 'paragraph' && block.content.size === 0
-    const at = emptyPara ? $from.before(1) : $from.after(1)
-    const tr = state.tr.replaceWith(at, emptyPara ? $from.after(1) : at, table)
-    tr.setSelection(TextSelection.create(tr.doc, at + 4))
+    const depth = Math.max(1, $from.depth)
+    const emptyBlock = $from.parent.isTextblock && $from.parent.content.size === 0
+    const at = emptyBlock ? $from.before(depth) : $from.after(1)
+    const tr = emptyBlock ? state.tr.replaceWith(at, $from.after(depth), node) : state.tr.insert(at, node)
+    tr.setSelection(Selection.near(tr.doc.resolve(Math.min(at + caretOffset, tr.doc.content.size))))
     v.dispatch(tr.scrollIntoView())
+  }
+
+  const insertTable = () => editor.action((ctx) => {
+    const table = buildTable(ctx, view().state.schema, ['', ''])
+    insertBlock(table, 4)
   })
 
   return {
-    getMarkdown: (): string => editor.action(getMarkdown()),
+    getMarkdown: (): string => tidyMarkdown(editor.action(getMarkdown())),
 
     /** Replaces the whole document. `fresh` also resets undo history. */
     setMarkdown(markdown: string, fresh = true) {
@@ -264,27 +354,40 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
       return doc.childCount <= 1 && doc.textContent.length === 0
     },
     text: () => view().state.doc.textBetween(0, view().state.doc.content.size, '\n', ' '),
+    frontMatter: (key: string) => frontMatterValue(view().state.doc, key),
+    setSpellcheck(on: boolean) { view().dom.spellcheck = on },
 
     focus() { view().focus() },
+    /** Caret to the end of the document (clicking below the text, like Typora). */
+    focusEnd() {
+      const v = view()
+      v.dispatch(v.state.tr.setSelection(Selection.atEnd(v.state.doc)).scrollIntoView())
+      v.focus()
+    },
     undo() { call(undoCommand.key) },
     redo() { call(redoCommand.key) },
 
     inline(cmd: InlineCommand) {
-      const key = {
-        bold: toggleStrongCommand.key,
-        italic: toggleEmphasisCommand.key,
-        code: toggleInlineCodeCommand.key,
-        strike: toggleStrikethroughCommand.key,
-      }[cmd]
-      call(key)
-      view().focus()
+      const v = view()
+      switch (cmd) {
+        case 'bold': call(toggleStrongCommand.key); break
+        case 'italic': call(toggleEmphasisCommand.key); break
+        case 'code': call(toggleInlineCodeCommand.key); break
+        case 'strike': call(toggleStrikethroughCommand.key); break
+        case 'highlight': toggleMark(v.state.schema.marks.highlight)(v.state, v.dispatch); break
+        case 'math_inline': insertMathInline(v); break
+        case 'link': links.api.open(v); return
+      }
+      v.focus()
     },
 
     block(cmd: BlockCommand) {
+      const v = view()
+      const { schema } = v.state
       const heading = /^h([1-6])$/.exec(cmd)
       if (heading) {
         // Pressing the shortcut for the current level toggles back to text, like Typora.
-        const { $from } = view().state.selection
+        const { $from } = v.state.selection
         const level = Number(heading[1])
         if ($from.parent.type.name === 'heading' && $from.parent.attrs.level === level) call(turnIntoTextCommand.key)
         else call(wrapInHeadingCommand.key, level)
@@ -294,12 +397,85 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
           case 'quote': call(wrapInBlockquoteCommand.key); break
           case 'bullet_list': call(wrapInBulletListCommand.key); break
           case 'ordered_list': call(wrapInOrderedListCommand.key); break
+          case 'task_list': {
+            call(wrapInBulletListCommand.key)
+            const { state } = view()
+            const { $from } = state.selection
+            for (let d = $from.depth; d > 0; d--) {
+              const node = $from.node(d)
+              if (node.type.name !== 'list_item') continue
+              view().dispatch(state.tr.setNodeMarkup($from.before(d), undefined, { ...node.attrs, checked: false }))
+              break
+            }
+            break
+          }
           case 'code_block': call(createCodeBlockCommand.key); break
           case 'hr': call(insertHrCommand.key); break
           case 'table': insertTable(); break
+          case 'math_block': insertMathBlock(v); break
+          case 'callout': {
+            // blockquote > [!NOTE] paragraph, then an empty paragraph for the content
+            const p = schema.nodes.paragraph
+            const marker = p.create(null, schema.text('[!NOTE]'))
+            insertBlock(schema.nodes.blockquote.create(null, [marker, p.create()]), 1 + marker.nodeSize + 1)
+            break
+          }
+          case 'toc': {
+            const p = schema.nodes.paragraph
+            insertBlock(p.create(null, schema.text('[TOC]')), 0)
+            const { state } = view()
+            const after = state.selection.$from.after(1)
+            const tr = state.tr.insert(after, p.create())
+            view().dispatch(tr.setSelection(TextSelection.create(tr.doc, after + 1)))
+            break
+          }
+          case 'mermaid': {
+            const sample = 'graph TD\n  A[Start] --> B{Idea?}\n  B -->|yes| C[Write it down]\n  B -->|no| D[Coffee]'
+            insertBlock(schema.nodes.code_block.create({ language: 'mermaid' }, schema.text(sample)), 1 + sample.length)
+            break
+          }
+          case 'front_matter': {
+            const { state } = v
+            const first = state.doc.firstChild
+            if (first?.type.name === 'front_matter') {
+              v.dispatch(state.tr.setSelection(TextSelection.create(state.doc, 1 + first.content.size)))
+            } else {
+              const tr = state.tr.insert(0, schema.nodes.front_matter.create(null, schema.text('title: ')))
+              v.dispatch(tr.setSelection(TextSelection.create(tr.doc, 8)).scrollIntoView())
+            }
+            break
+          }
         }
       }
       view().focus()
+    },
+
+    /** Inserts an image at `pos` (or the caret). */
+    insertImage(src: string, alt = '', pos?: number) {
+      const v = view()
+      const { state } = v
+      const { schema } = state
+      const image = schema.nodes.image.create({ src, alt, title: '' })
+      const at = Math.min(pos ?? state.selection.from, state.doc.content.size)
+      const tr = state.doc.resolve(at).parent.inlineContent
+        ? state.tr.insert(at, image)
+        : state.tr.insert(at, schema.nodes.paragraph.create(null, image))
+      v.dispatch(tr.scrollIntoView())
+      v.focus()
+    },
+
+    /** After an online image was downloaded, point every copy of it at the local file. */
+    replaceImageSrc(from: string, to: string) {
+      const v = view()
+      const tr = v.state.tr
+      v.state.doc.descendants((node, pos) => {
+        if (node.type.name === 'image' && node.attrs.src === from) tr.setNodeMarkup(pos, undefined, { ...node.attrs, src: to })
+      })
+      if (tr.docChanged) v.dispatch(tr)
+    },
+
+    posAtCoords(left: number, top: number) {
+      return view().posAtCoords({ left, top })?.pos ?? null
     },
 
     destroy: () => editor.destroy(),

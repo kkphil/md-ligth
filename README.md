@@ -24,10 +24,24 @@ Electron) mit dem [Milkdown](https://milkdown.dev)/ProseMirror-Editor.
 | `---`                       | Trennlinie                       |
 | `\| Name \| Alter \|` + Enter | Tabelle mit diesen Spalten       |
 | `![alt](bild.png)`          | Bild (relativ zur Datei)         |
+| `$E=mc^2$`                  | LaTeX-Formel inline (KaTeX)      |
+| `$$` + Enter                | LaTeX-Formelblock                |
+| `==text==`                  | ==Hervorhebung==                 |
+| `[text](https://…)`         | Link                             |
+| ```` ```js ```` + Enter     | Codeblock mit Syntax-Highlighting |
+| ```` ```mermaid ````        | Diagramm (Mermaid) mit Live-Vorschau |
+| `> [!NOTE]` / `[!TIP]` / `[!WARNING]` … | Callout-Box (GitHub-Stil) |
+| `[TOC]`                     | Inhaltsverzeichnis (klickbar)    |
+| `---` am Dateianfang        | YAML-Front-Matter                |
+| `Text[^1]` / `[^1]: …`      | Fußnote                          |
+| `/`                         | Befehlsmenü wie in Notion        |
 
 Typora-Details: Steht der Cursor in einer Überschrift, zeigt der linke Rand
-die `###`-Marker. Backspace am Anfang einer Überschrift macht sie wieder zu
-normalem Text. ⌘-Klick öffnet Links.
+die `###`-Marker. Formeln zeigen ihren LaTeX-Quelltext, sobald der Cursor
+darin steht, und sonst die gerenderte Formel. Backspace am Anfang einer
+Überschrift macht sie wieder zu normalem Text. ⌘-Klick öffnet Links, ⌘K
+bearbeitet sie. Gespeichert wird immer Markdown, das Typora, Obsidian und
+GitHub verstehen.
 
 ## Tastenkürzel
 
@@ -41,7 +55,30 @@ normalem Text. ⌘-Klick öffnet Links.
 | ⇧⌘X           | Durchgestrichen                         |
 | ⌥⌘Q / ⌥⌘O / ⌥⌘U | Zitat / nummerierte / Aufzählungsliste |
 | ⌥⌘C / ⌥⌘T     | Codeblock / Tabelle                     |
+| ⌥⌘B / ⌃M      | Formelblock / Inline-Formel             |
+| ⇧⌘H / ⌘K      | Hervorheben / Link                      |
+| ⇧⌘I           | Bild einfügen…                          |
+| ⌘,            | Einstellungen                           |
 | ⌘= / ⌘- / ⇧⌘0 | Zoom                                    |
+
+## Einstellungen (⌘,)
+
+- **Bilder – „When Insert…“** wie bei Typora: Eingefügte Bilder,
+  Screenshots oder ins Fenster gezogene Bilder werden
+  - nicht angefasst,
+  - in den Ordner der Datei (`./`),
+  - nach `./${filename}.assets` oder
+  - in einen eigenen Ordner kopiert (Standard: `./_assets`; `./…`, `../…`
+    oder absolut, `${filename}` = Dateiname).
+
+  Dazu: „Apply above rules to local images“, „… to online images“ (lädt
+  Web-Bilder herunter) und „Use relative path if possible“. Ein
+  `typora-copy-images-to:` in der Front Matter hat Vorrang. Ist die Datei noch
+  nicht gespeichert, fragt md-light zuerst nach dem Speicherort.
+- **Darstellung:** Theme (System/Hell/Dunkel), Schriftgröße, Zeilenbreite
+- **Editor:** Rechtschreibprüfung, Auto-Save
+
+Die Einstellungen gelten für alle Fenster sofort.
 
 Außerdem: `.md`-Dateien per Doppelklick im Finder, „Öffnen mit“, aufs
 Dock-Icon oder ins Fenster ziehen. Ungespeicherte Änderungen werden beim
@@ -70,9 +107,16 @@ GitHub-Action in `.github/workflows/release.yml` baut eine Universal-App
 src/
   main.ts       Dokument-Zustand, Öffnen/Speichern, Menübefehle, Statusleiste
   editor.ts     Milkdown-Setup + Typora-Extras (###-Hinweis, Pipe-Tabellen, Checkboxen)
+  extensions/
+    math.ts     LaTeX ($…$, $$…$$) mit KaTeX
+    markdown.ts ==Highlight==, Front Matter, Callouts, [TOC], Link-Eingabe
+    code.ts     Syntax-Highlighting, Sprachfeld, Mermaid-/Mathe-Vorschau
+    popups.ts   „/“-Menü und Link-Editor
+  images.ts     Regeln, wohin eingefügte Bilder kopiert werden
+  settings.ts   Einstellungen (+ settings-ui.ts für den Dialog)
   source.ts     Source-Modus (Textarea mit Listen-Fortsetzung, Tab, Formatierung)
   platform.ts   Tauri-Anbindung bzw. Browser-Fallback
   style.css     Theme (hell/dunkel)
 src-tauri/
-  src/lib.rs    Fenster, natives Menü, Datei-I/O, Finder-Integration, Beenden-Dialog
+  src/lib.rs    Fenster, Menü, Datei-I/O, Bilder kopieren/laden, Einstellungen, Finder
 ```
