@@ -11,7 +11,11 @@ import { IMAGE_EXT, type ImageSource, imageAlt, placeImage } from './images'
 import { fileName, native, platform } from './platform'
 import { applyAppearance, loadSettings, onSettingsChanged, saveSettings, type Settings } from './settings'
 import { createSettingsDialog } from './settings-ui'
+import { createSidebar, type Heading } from './sidebar'
 import * as source from './source'
+import { createTitlebar, type Stats } from './titlebar'
+import { dirname } from './paths'
+import { workspace } from './workspace'
 
 declare global {
   interface Window { __MDL_INITIAL_FILE__?: string | null }
@@ -21,9 +25,6 @@ const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as 
 const editorEl = $<HTMLDivElement>('editor')
 const sourceEl = $<HTMLTextAreaElement>('source')
 const scroller = $<HTMLElement>('scroller')
-const statusFile = $<HTMLSpanElement>('status-file')
-const statusCount = $<HTMLSpanElement>('status-count')
-const modeToggle = $<HTMLButtonElement>('mode-toggle')
 
 // ---------------------------------------------------------------------------
 // Document state
@@ -80,6 +81,71 @@ const isPristine = () =>
   filePath === null && !isDirty() && (mode === 'source' ? sourceEl.value.trim() === '' : editor.isEmpty())
 
 // ---------------------------------------------------------------------------
+// Title bar and sidebar
+// ---------------------------------------------------------------------------
+
+function stats(): Stats {
+  const rich = mode === 'rich' ? editor.stats() : null
+  const text = rich ? rich.text : source.plainText(sourceEl.value)
+  const paragraphs = rich ? rich.paragraphs : sourceEl.value.split(/\n\s*\n/).filter((b) => b.trim()).length
+  return {
+    words: text.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0,
+    characters: text.replace(/\n/g, '').length,
+    charactersNoSpaces: text.replace(/\s/g, '').length,
+    paragraphs,
+  }
+}
+
+function headings(): Heading[] {
+  if (mode === 'rich') return editor.headings()
+  const out: Heading[] = []
+  let fence = false
+  let offset = 0
+  for (const line of sourceEl.value.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) fence = !fence
+    const m = fence ? null : /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(line)
+    if (m) out.push({ level: m[1].length, text: m[2], pos: offset })
+    offset += line.length + 1
+  }
+  return out
+}
+
+function goToHeading(h: Heading) {
+  if (mode === 'rich') return editor.goTo(h.pos)
+  sourceEl.focus()
+  sourceEl.setSelectionRange(h.pos, h.pos)
+  const line = sourceEl.value.slice(0, h.pos).split('\n').length - 1
+  const lineHeight = parseFloat(getComputedStyle(sourceEl).lineHeight) || 24
+  scroller.scrollTo({ top: sourceEl.offsetTop + line * lineHeight - 16, behavior: 'smooth' })
+}
+
+/** Remembers the file's folder for the sidebar and highlights the file there. */
+function noteFile(path: string) {
+  if (!path.includes('/') && !path.includes('\\')) return // browser download, no real path
+  void workspace.addRecentFolder(dirname(path)).then(() => sidebar.reveal(path))
+}
+
+const titlebar = createTitlebar($('titlebar'), {
+  docPath: () => filePath,
+  isDirty,
+  commit: (path) => (filePath ? moveTo(path) : saveNewAt(path)),
+  stats,
+  onToggleSidebar: () => sidebar.toggle('files'),
+  onOutline: () => sidebar.toggle('outline'),
+  onToggleSource: () => void run('toggle_source'),
+  sourceMode: () => mode === 'source',
+  sidebarTab: () => sidebar.tab(),
+})
+
+const sidebar = createSidebar($('sidebar'), {
+  currentPath: () => filePath,
+  open: (path) => void switchTo(path),
+  headings,
+  goToHeading,
+  onLayoutChange: () => queueMicrotask(() => titlebar.refresh()),
+})
+
+// ---------------------------------------------------------------------------
 // Title, status bar, word count
 // ---------------------------------------------------------------------------
 
@@ -97,13 +163,9 @@ function refresh() {
   const dirty = isDirty()
   const name = fileName(filePath)
   platform.setTitle(`${name}${dirty ? ' — Edited' : ''}`)
-  statusFile.textContent = filePath ?? 'Untitled'
-  statusFile.title = filePath ?? ''
   document.body.classList.toggle('dirty', dirty)
-
-  const text = mode === 'source' ? source.plainText(sourceEl.value) : editor.text()
-  const words = text.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0
-  statusCount.textContent = `${words.toLocaleString()} ${words === 1 ? 'word' : 'words'} · ${text.replace(/\s/g, '').length.toLocaleString()} characters`
+  titlebar.refresh()
+  sidebar.refreshOutline()
 
   if (native && dirty !== lastReportedDirty) {
     lastReportedDirty = dirty
@@ -155,7 +217,6 @@ function setMode(next: 'rich' | 'source') {
     editor.focus()
   }
   document.body.dataset.mode = mode
-  modeToggle.classList.toggle('active', mode === 'source')
   restoreScroll(ratio)
   refresh()
 }
@@ -176,6 +237,45 @@ function load(path: string, content: string) {
   }
   scroller.scrollTop = 0
   refresh()
+  noteFile(path)
+}
+
+/** Opens `path` in this window (from the sidebar), asking about unsaved changes first. */
+async function switchTo(path: string) {
+  if (path === filePath) return
+  if (isDirty()) {
+    const choice = await platform.askSaveChanges(fileName(filePath))
+    if (choice === 'cancel' || (choice === 'save' && !(await saveFile()))) return
+  }
+  try {
+    load(path, await platform.read(path))
+    if (mode === 'rich') editor.focus()
+  } catch (err) {
+    alert(`Could not open ${path}\n\n${err}`)
+  }
+}
+
+/** Title popover on a saved file: rename and/or move it. */
+async function moveTo(path: string): Promise<boolean> {
+  if (!filePath || path === filePath) return true
+  try {
+    await workspace.rename(filePath, path)
+    filePath = path
+    refresh()
+    noteFile(path)
+    void sidebar.refresh()
+    return true
+  } catch (err) {
+    alert(`Could not rename the file.\n\n${err}`)
+    return false
+  }
+}
+
+/** Title popover on an untitled document: save it at `path` (never silently overwriting). */
+async function saveNewAt(path: string): Promise<boolean> {
+  const siblings = await workspace.listDir(dirname(path)).catch(() => [])
+  if (siblings.some((e) => e.path === path) && !(await platform.ask(`“${fileName(path)}” already exists. Replace it?`, 'Replace'))) return false
+  return writeTo(path)
 }
 
 /** Opens a file here if this window is an untouched blank document, otherwise in a new window. */
@@ -214,6 +314,7 @@ async function writeTo(path: string): Promise<boolean> {
     filePath = path
     markClean()
     refresh()
+    noteFile(path)
     return true
   } catch (err) {
     alert(`Could not save ${path}\n\n${err}`)
@@ -323,6 +424,13 @@ async function run(command: string) {
     case 'toggle_source': return setMode(mode === 'rich' ? 'source' : 'rich')
     case 'image': return insertImageDialog()
     case 'settings': return settingsDialog.open()
+    case 'toggle_sidebar': return sidebar.toggle('files')
+    case 'outline': return sidebar.toggle('outline')
+    case 'add_folder': {
+      const dir = await workspace.pickFolder()
+      if (dir) await workspace.addRecentFolder(dir)
+      return sidebar.show('files')
+    }
     case 'undo': return mode === 'source' ? void document.execCommand('undo') : editor.undo()
     case 'redo': return mode === 'source' ? void document.execCommand('redo') : editor.redo()
     case 'zoom_in': zoom = Math.min(2, +(zoom + 0.1).toFixed(2)); return applyZoom()
@@ -343,7 +451,6 @@ async function run(command: string) {
   }
 }
 
-modeToggle.addEventListener('click', () => run('toggle_source'))
 sourceEl.addEventListener('input', () => {
   source.autosize(sourceEl)
   scheduleRefresh()
@@ -387,7 +494,7 @@ if (native) {
     'o': 'open', 's': 'save', 'S': 'save_as', '/': 'toggle_source',
     '1': 'h1', '2': 'h2', '3': 'h3', '4': 'h4', '5': 'h5', '6': 'h6', '0': 'paragraph',
     '=': 'zoom_in', '-': 'zoom_out', 'e': 'code', 'X': 'strike', 'H': 'highlight', 'k': 'link',
-    'm': 'math_inline', 'B': 'math_block', ',': 'settings', 'I': 'image',
+    'm': 'math_inline', 'B': 'math_block', ',': 'settings', 'I': 'image', 'L': 'toggle_sidebar', '!': 'outline',
   }
   window.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return

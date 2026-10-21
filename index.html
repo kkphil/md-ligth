@@ -7,16 +7,14 @@
     <title>md-light</title>
   </head>
   <body>
-    <main id="scroller">
-      <div id="editor" class="paper"></div>
-      <textarea id="source" class="paper" spellcheck="false" hidden></textarea>
-    </main>
-    <footer id="statusbar">
-      <button id="mode-toggle" type="button" title="Toggle source mode (⌘/)">&lt;/&gt;</button>
-      <span id="status-file"></span>
-      <span class="spacer"></span>
-      <span id="status-count"></span>
-    </footer>
+    <header id="titlebar"></header>
+    <div id="workspace">
+      <aside id="sidebar" hidden></aside>
+      <main id="scroller">
+        <div id="editor" class="paper"></div>
+        <textarea id="source" class="paper" spellcheck="false" hidden></textarea>
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

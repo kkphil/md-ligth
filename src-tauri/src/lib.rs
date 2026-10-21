@@ -238,6 +238,145 @@ fn save_settings(app: AppHandle, settings: serde_json::Value) -> Result<(), Stri
 }
 
 // ---------------------------------------------------------------------------
+// Workspace: folder listing for the sidebar, new files, rename/move, recent folders
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct DirEntry {
+    name: String,
+    path: String,
+    dir: bool,
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| MARKDOWN_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Subfolders and Markdown files of `dir` (hidden entries skipped), folders first.
+#[tauri::command]
+async fn list_dir(dir: String) -> Result<Vec<DirEntry>, String> {
+    let mut entries: Vec<DirEntry> = std::fs::read_dir(&dir)
+        .map_err(err)?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let path = e.path();
+            let name = e.file_name().to_string_lossy().into_owned();
+            let dir = path.is_dir();
+            if name.starts_with('.') || (!dir && !is_markdown(&path)) {
+                return None;
+            }
+            Some(DirEntry { name, path: path.to_string_lossy().into_owned(), dir })
+        })
+        .collect();
+    entries.sort_by(|a, b| b.dir.cmp(&a.dir).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase())));
+    Ok(entries)
+}
+
+/// Creates an empty `name` (adds `.md`, never overwrites: `Untitled-1.md` …) in `dir`.
+#[tauri::command]
+async fn create_file(dir: String, name: String) -> Result<String, String> {
+    let dir = PathBuf::from(dir);
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let name = name.trim().trim_matches(|c| c == '/' || c == '\\');
+    let name = if name.is_empty() { "Untitled".to_string() } else { name.to_string() };
+    let name = if is_markdown(Path::new(&name)) { name } else { format!("{name}.md") };
+    let (stem, ext) = name.rsplit_once('.').map(|(s, e)| (s.to_string(), format!(".{e}"))).unwrap_or((name.clone(), String::new()));
+    let mut n = 0;
+    loop {
+        let candidate = if n == 0 { dir.join(&name) } else { dir.join(format!("{stem}-{n}{ext}")) };
+        if !candidate.exists() {
+            std::fs::write(&candidate, "").map_err(err)?;
+            return Ok(candidate.to_string_lossy().into_owned());
+        }
+        n += 1;
+    }
+}
+
+/// Renames or moves a file. Refuses to overwrite an existing one.
+#[tauri::command]
+async fn rename_file(from: String, to: String) -> Result<(), String> {
+    let (from, to) = (PathBuf::from(from), PathBuf::from(to));
+    if from == to {
+        return Ok(());
+    }
+    // A case-only rename on a case-insensitive disk "exists" already but is fine.
+    let case_only = from.to_string_lossy().to_lowercase() == to.to_string_lossy().to_lowercase();
+    if to.exists() && !case_only {
+        return Err(format!("“{}” already exists", to.file_name().unwrap_or_default().to_string_lossy()));
+    }
+    if let Some(parent) = to.parent() {
+        std::fs::create_dir_all(parent).map_err(err)?;
+    }
+    if std::fs::rename(&from, &to).is_err() {
+        // Different volume: copy, then remove the original.
+        std::fs::copy(&from, &to).map_err(err)?;
+        std::fs::remove_file(&from).map_err(err)?;
+    }
+    Ok(())
+}
+
+const MAX_RECENT_FOLDERS: usize = 30;
+
+fn recent_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app.path().app_config_dir().map_err(err)?.join("recent-folders.json"))
+}
+
+fn read_recent(app: &AppHandle) -> Vec<String> {
+    recent_path(app)
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|d| Path::new(d).is_dir())
+        .collect()
+}
+
+fn write_recent(app: &AppHandle, folders: Vec<String>) -> Result<Vec<String>, String> {
+    let path = recent_path(app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(err)?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&folders).map_err(err)?).map_err(err)?;
+    app.emit("recent-changed", &folders).map_err(err)?;
+    Ok(folders)
+}
+
+/// Folders the user opened or saved files in, most recent first.
+#[tauri::command]
+fn recent_folders(app: AppHandle) -> Vec<String> {
+    read_recent(&app)
+}
+
+#[tauri::command]
+fn add_recent_folder(app: AppHandle, dir: String) -> Result<Vec<String>, String> {
+    let mut folders = read_recent(&app);
+    if folders.first() == Some(&dir) {
+        return Ok(folders);
+    }
+    folders.retain(|d| d != &dir);
+    folders.insert(0, dir);
+    folders.truncate(MAX_RECENT_FOLDERS);
+    write_recent(&app, folders)
+}
+
+#[tauri::command]
+fn remove_recent_folder(app: AppHandle, dir: String) -> Result<Vec<String>, String> {
+    let mut folders = read_recent(&app);
+    folders.retain(|d| d != &dir);
+    write_recent(&app, folders)
+}
+
+/// Default place for new documents (~/Documents).
+#[tauri::command]
+fn documents_dir(app: AppHandle) -> Result<String, String> {
+    let dir = app.path().document_dir().or_else(|_| app.path().home_dir()).map_err(err)?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
 
@@ -265,6 +404,14 @@ fn open_window(app: &AppHandle, path: Option<String>) -> tauri::Result<WebviewWi
         let scale = w.scale_factor().ok()?;
         Some(w.outer_position().ok()?.to_logical::<f64>(scale))
     });
+    // Mac: content reaches under the title bar; md-light draws its own (see src/titlebar.ts).
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true)
+            .traffic_light_position(tauri::LogicalPosition::new(16.0, 19.0));
+    }
     builder = match anchor {
         Some(pos) => builder.position(pos.x + 26.0, pos.y + 26.0),
         None => builder.center(),
@@ -331,6 +478,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let file = SubmenuBuilder::new(app, "File")
         .item(&item("new", "New", Some("CmdOrCtrl+N"))?)
         .item(&item("open", "Open…", Some("CmdOrCtrl+O"))?)
+        .item(&item("add_folder", "Add Folder to Sidebar…", None)?)
         .separator()
         .item(&item("save", "Save", Some("CmdOrCtrl+S"))?)
         .item(&item("save_as", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
@@ -390,6 +538,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .build()?;
 
     let view = SubmenuBuilder::new(app, "View")
+        .item(&item("toggle_sidebar", "Sidebar", Some("CmdOrCtrl+Shift+L"))?)
+        .item(&item("outline", "Outline", Some("CmdOrCtrl+Shift+1"))?)
+        .separator()
         .item(&item("toggle_source", "Source Code Mode", Some("CmdOrCtrl+/"))?)
         .separator()
         .item(&item("zoom_in", "Zoom In", Some("CmdOrCtrl+="))?)
@@ -472,7 +623,14 @@ pub fn run() {
             download_image,
             app_image_dir,
             load_settings,
-            save_settings
+            save_settings,
+            list_dir,
+            create_file,
+            rename_file,
+            recent_folders,
+            add_recent_folder,
+            remove_recent_folder,
+            documents_dir
         ])
         .setup(|app| {
             // `md-light notes.md` (on macOS files arrive through RunEvent::Opened instead).
@@ -547,6 +705,27 @@ mod tests {
         assert_eq!(a, same, "identical content is reused");
         assert!(b.ends_with("image-1.png"), "{b}");
         assert!(weird.ends_with("a_b_c.png"), "{weird}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn creates_lists_and_renames_files() {
+        let dir = std::env::temp_dir().join(format!("mdl-ws-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let d = dir.to_string_lossy().to_string();
+        use tauri::async_runtime::block_on as block;
+        let a = block(create_file(d.clone(), "Notes".into())).unwrap();
+        let b = block(create_file(d.clone(), "Notes".into())).unwrap();
+        assert!(a.ends_with("Notes.md") && b.ends_with("Notes-1.md"), "{a} {b}");
+        std::fs::create_dir_all(dir.join("Sub")).unwrap();
+        std::fs::create_dir_all(dir.join(".hidden")).unwrap();
+        std::fs::write(dir.join("image.png"), b"x").unwrap();
+        let names: Vec<String> = block(list_dir(d.clone())).unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, ["Sub", "Notes-1.md", "Notes.md"]);
+        assert!(block(rename_file(b.clone(), a.clone())).is_err(), "never overwrites");
+        let moved = dir.join("Sub/Renamed.md").to_string_lossy().to_string();
+        block(rename_file(b, moved.clone())).unwrap();
+        assert!(Path::new(&moved).exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

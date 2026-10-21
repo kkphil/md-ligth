@@ -34,6 +34,15 @@ type FsHandle = {
   createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>
 }
 const handles = new Map<string, FsHandle>()
+
+/** In-memory files for trying the sidebar in a browser: open the page with `?demo`. */
+export const memfs = new Map<string, string>()
+if (!native && new URLSearchParams(location.search).has('demo')) {
+  memfs.set('/demo/Notes/Ideas.md', '# Ideas\n\n- A lightweight Markdown editor\n- ==Typora== feeling\n')
+  memfs.set('/demo/Notes/Reading list.md', '# Reading list\n\n- [ ] Gödel, Escher, Bach\n- [x] The Pragmatic Programmer\n')
+  memfs.set('/demo/Uni/VL_26_10_21.md', '# Vorlesung 21.10.\n\n## Komplexität\n\n$O(n \\log n)$ für Sortieren.\n\n## Graphen\n\nBFS und DFS.\n')
+  memfs.set('/demo/Uni/Analysis/Blatt 1.md', '# Blatt 1\n\n$$\n\\sum_{k=1}^n k = \\frac{n(n+1)}{2}\n$$\n')
+}
 const fsAccess = 'showOpenFilePicker' in window
 const pickerTypes = [{ description: 'Markdown', accept: { 'text/markdown': ['.md', '.markdown', '.txt'] } }]
 
@@ -87,6 +96,7 @@ export const platform = {
 
   async read(path: string): Promise<string> {
     if (native) return invoke<string>('read_file', { path })
+    if (memfs.has(path)) return memfs.get(path)!
     const handle = handles.get(path)
     if (!handle) throw new Error(`Cannot read ${path} in the browser`)
     return (await handle.getFile()).text()
@@ -96,6 +106,10 @@ export const platform = {
   async write(path: string, content: string): Promise<boolean> {
     if (native) {
       await invoke('write_file', { path, contents: content })
+      return true
+    }
+    if (path.startsWith('/demo/')) {
+      memfs.set(path, content)
       return true
     }
     const handle = handles.get(path)
