@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "app:dev": "tauri dev",
-    "app:build": "tauri build"
+    "app:build": "tauri build",
+    "app:install": "tauri build --bundles app && rm -rf /Applications/md-light.app && cp -R src-tauri/target/release/bundle/macos/md-light.app /Applications/ && open /Applications/md-light.app"
   },
   "license": "MIT",
   "devDependencies": {
