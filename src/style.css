@@ -1,0 +1,268 @@
+/* md-light — a calm, Typora-like reading/writing theme. Follows the system light/dark setting. */
+
+:root {
+  --zoom: 1;
+  --bg: #ffffff;
+  --fg: #2c2c2e;
+  --muted: #8e8e93;
+  --faint: #c7c7cc;
+  --border: #e5e5ea;
+  --surface: #f6f7f9;
+  --accent: #2f6fdb;
+  --mark: #fff3b0;
+  --code-fg: #c7254e;
+  --selection: rgba(47, 111, 219, 0.18);
+  --font-text: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1e20;
+    --fg: #e3e3e6;
+    --muted: #8e8e93;
+    --faint: #48484a;
+    --border: #38383a;
+    --surface: #2a2a2d;
+    --accent: #6ea8ff;
+    --mark: #5c4d14;
+    --code-fg: #ff8fa3;
+    --selection: rgba(110, 168, 255, 0.28);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+::selection { background: var(--selection); }
+
+#scroller {
+  flex: 1;
+  overflow-y: auto;
+  cursor: text;
+}
+
+.paper {
+  max-width: calc(820px * var(--zoom));
+  margin: 0 auto;
+  padding: 56px 48px 40vh;
+  font-size: calc(16px * var(--zoom));
+  line-height: 1.7;
+}
+
+[hidden] { display: none !important; }
+
+/* ---------------------------------------------------------------- editor */
+
+.milkdown .ProseMirror {
+  outline: none;
+  word-wrap: break-word;
+  caret-color: var(--accent);
+}
+
+.ProseMirror > *:first-child { margin-top: 0; }
+
+.ProseMirror p { margin: 0 0 0.9em; }
+
+.ProseMirror p.is-empty:first-child::before {
+  content: attr(data-placeholder);
+  color: var(--faint);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.ProseMirror h1, .ProseMirror h2, .ProseMirror h3,
+.ProseMirror h4, .ProseMirror h5, .ProseMirror h6 {
+  position: relative;
+  font-weight: 650;
+  line-height: 1.3;
+  margin: 1.6em 0 0.6em;
+  letter-spacing: -0.01em;
+}
+.ProseMirror h1 { font-size: 2.1em; padding-bottom: 0.25em; border-bottom: 1px solid var(--border); }
+.ProseMirror h2 { font-size: 1.6em; padding-bottom: 0.2em; border-bottom: 1px solid var(--border); }
+.ProseMirror h3 { font-size: 1.3em; }
+.ProseMirror h4 { font-size: 1.1em; }
+.ProseMirror h5 { font-size: 1em; }
+.ProseMirror h6 { font-size: 1em; color: var(--muted); }
+
+/* The "###" hint shown in the gutter while the caret is inside a heading. */
+.md-hint {
+  position: absolute;
+  right: 100%;
+  margin-right: 0.5em;
+  top: 0;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 0.55em;
+  font-weight: 500;
+  line-height: calc(1.3em / 0.55);
+  user-select: none;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ProseMirror a { color: var(--accent); text-decoration: none; }
+.ProseMirror a:hover { text-decoration: underline; }
+
+.ProseMirror strong { font-weight: 650; }
+
+.ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  color: var(--code-fg);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+.ProseMirror pre {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  line-height: 1.55;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0 0 1.1em;
+  overflow-x: auto;
+  white-space: pre;
+  tab-size: 4;
+}
+.ProseMirror pre code { color: inherit; background: none; border: 0; padding: 0; font-size: 1em; }
+
+.ProseMirror blockquote {
+  margin: 0 0 1em;
+  padding: 0.1em 1em;
+  color: var(--muted);
+  border-left: 4px solid var(--border);
+}
+.ProseMirror blockquote p:last-child { margin-bottom: 0.4em; }
+
+.ProseMirror ul, .ProseMirror ol { margin: 0 0 0.9em; padding-left: 1.7em; }
+.ProseMirror li > p { margin: 0.15em 0; }
+.ProseMirror li::marker { color: var(--muted); }
+
+.ProseMirror li[data-item-type="task"] {
+  list-style: none;
+  position: relative;
+}
+.ProseMirror li[data-item-type="task"]::before {
+  content: "";
+  position: absolute;
+  left: -1.55em;
+  top: 0.38em;
+  width: 1em;
+  height: 1em;
+  border: 1.5px solid var(--faint);
+  border-radius: 4px;
+  cursor: pointer;
+  background: var(--bg) center / 75% no-repeat;
+}
+.ProseMirror li[data-item-type="task"][data-checked="true"]::before {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 10'%3E%3Cpath d='M1 5l3.5 3.5L11 1' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+.ProseMirror li[data-item-type="task"][data-checked="true"] > p { color: var(--muted); text-decoration: line-through; }
+
+.ProseMirror hr {
+  border: 0;
+  border-top: 2px solid var(--border);
+  margin: 1.8em 0;
+}
+.ProseMirror hr.ProseMirror-selectednode { border-top-color: var(--accent); }
+
+.ProseMirror img { max-width: 100%; border-radius: 4px; vertical-align: middle; }
+.ProseMirror img.ProseMirror-selectednode { outline: 2px solid var(--accent); }
+
+.ProseMirror table {
+  border-collapse: collapse;
+  margin: 0 0 1.1em;
+  width: auto;
+  overflow: hidden;
+}
+.ProseMirror th, .ProseMirror td {
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  min-width: 4em;
+  vertical-align: top;
+}
+.ProseMirror th { background: var(--surface); font-weight: 600; text-align: left; }
+.ProseMirror td > p, .ProseMirror th > p { margin: 0; }
+.ProseMirror .selectedCell::after { background: var(--selection); }
+
+.ProseMirror del, .ProseMirror s { color: var(--muted); }
+
+/* ------------------------------------------------------------ source mode */
+
+#source {
+  display: block;
+  width: 100%;
+  min-height: 100%;
+  resize: none;
+  border: 0;
+  outline: none;
+  overflow: hidden;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: calc(14.5px * var(--zoom));
+  line-height: 1.7;
+  tab-size: 4;
+  caret-color: var(--accent);
+}
+
+/* ------------------------------------------------------------- status bar */
+
+#statusbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11.5px;
+  color: var(--muted);
+  border-top: 1px solid transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: border-color 0.2s;
+}
+#scroller:hover + #statusbar, #statusbar:hover { border-top-color: var(--border); }
+
+#statusbar .spacer { flex: 1; }
+#status-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.dirty #status-file::after { content: " •"; color: var(--accent); }
+
+#mode-toggle {
+  font: 600 11px var(--font-mono);
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+#mode-toggle:hover { border-color: var(--border); color: var(--fg); }
+#mode-toggle.active { color: var(--accent); border-color: var(--accent); }
+
+@media (max-width: 640px) {
+  .paper { padding: 32px 20px 40vh; }
+}
