@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="/favicon.svg" />
+    <title>md-light</title>
+  </head>
+  <body>
+    <main id="scroller">
+      <div id="editor" class="paper"></div>
+      <textarea id="source" class="paper" spellcheck="false" hidden></textarea>
+    </main>
+    <footer id="statusbar">
+      <button id="mode-toggle" type="button" title="Toggle source mode (⌘/)">&lt;/&gt;</button>
+      <span id="status-file"></span>
+      <span class="spacer"></span>
+      <span id="status-count"></span>
+    </footer>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
