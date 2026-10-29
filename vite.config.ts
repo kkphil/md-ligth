@@ -9,6 +9,6 @@ export default defineConfig({
     target: 'safari15',
     sourcemap: false,
     // Everything is loaded from disk, so one bundle is fine.
-    chunkSizeWarningLimit: 1024,
+    chunkSizeWarningLimit: 2048,
   },
 })
