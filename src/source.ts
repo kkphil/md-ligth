@@ -35,12 +35,17 @@ export function plainText(md: string) {
     .replace(/[*_~`|]/g, ' ')
 }
 
-const INLINE_MARKERS: Record<InlineCommand, string> = { bold: '**', italic: '*', code: '`', strike: '~~' }
+const INLINE_MARKERS: Record<Exclude<InlineCommand, 'link'>, string> = { bold: '**', italic: '*', code: '`', strike: '~~', highlight: '==', math_inline: '$' }
 
 export function inline(el: HTMLTextAreaElement, cmd: InlineCommand) {
-  const marker = INLINE_MARKERS[cmd]
   const { selectionStart: s, selectionEnd: e, value } = el
   const selected = value.slice(s, e)
+  if (cmd === 'link') {
+    const text = `[${selected || 'link'}](url)`
+    const urlAt = s + text.length - 4
+    return replace(el, s, e, text, urlAt, urlAt + 3)
+  }
+  const marker = INLINE_MARKERS[cmd]
   const n = marker.length
   // Already wrapped (markers just outside the selection)? Unwrap.
   if (value.slice(s - n, s) === marker && value.slice(e, e + n) === marker) {
@@ -67,6 +72,14 @@ export function block(el: HTMLTextAreaElement, cmd: BlockCommand) {
   switch (cmd) {
     case 'hr': return insertBlock('---')
     case 'table': return insertBlock('| Column | Column |\n| ------ | ------ |\n|        |        |')
+    case 'math_block': return insertBlock('$$\n\n$$')
+    case 'toc': return insertBlock('[TOC]')
+    case 'callout': return insertBlock('> [!NOTE]\n> ')
+    case 'mermaid': return insertBlock('```mermaid\ngraph TD\n  A --> B\n```')
+    case 'front_matter': {
+      if (value.startsWith('---\n')) return el.setSelectionRange(4, 4)
+      return replace(el, 0, 0, '---\ntitle: \n---\n\n', 11)
+    }
     case 'code_block': {
       const body = value.slice(start, end)
       const text = `\`\`\`\n${body}\n\`\`\``
@@ -84,6 +97,7 @@ export function block(el: HTMLTextAreaElement, cmd: BlockCommand) {
     switch (cmd) {
       case 'quote': return current.startsWith('>') ? '' : '> '
       case 'bullet_list': return /^[-*+]/.test(current) ? '' : '- '
+      case 'task_list': return /\[[ xX]\]/.test(current) ? '' : '- [ ] '
       case 'ordered_list': return /^\d/.test(current) ? '' : `${i + 1}. `
       default: return '' // paragraph
     }
