@@ -4,7 +4,7 @@
  */
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { message, open, save } from '@tauri-apps/plugin-dialog'
+import { ask, message, open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl } from '@tauri-apps/plugin-opener'
 
 export const native = isTauri()
@@ -141,6 +141,25 @@ export const platform = {
     }
     if (window.confirm(`${text}\n\nOK = save, Cancel = more options`)) return 'save'
     return window.confirm('Discard your changes?') ? 'discard' : 'cancel'
+  },
+
+  async ask(text: string, okLabel: string): Promise<boolean> {
+    if (native) return ask(text, { title: 'md-light', kind: 'info', okLabel, cancelLabel: 'Cancel' })
+    return window.confirm(text)
+  },
+
+  /** Image files to insert: paths in the app, File objects in the browser. */
+  async pickImages(): Promise<(string | File)[]> {
+    if (native) {
+      const picked = await open({ multiple: true, directory: false, filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'tif', 'tiff', 'avif', 'heic'] }] })
+      return picked ?? []
+    }
+    return new Promise((resolve) => {
+      const input = Object.assign(document.createElement('input'), { type: 'file', accept: 'image/*', multiple: true })
+      input.onchange = () => resolve([...(input.files ?? [])])
+      input.oncancel = () => resolve([])
+      input.click()
+    })
   },
 
   setTitle(title: string) {

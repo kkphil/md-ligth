@@ -6,8 +6,11 @@ import './style.css'
 import { invoke } from '@tauri-apps/api/core'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
-import { type BlockCommand, createEditor, type InlineCommand } from './editor'
+import { BLOCK_COMMANDS, type BlockCommand, createEditor, INLINE_COMMANDS, type InlineCommand } from './editor'
+import { IMAGE_EXT, type ImageSource, imageAlt, placeImage } from './images'
 import { fileName, native, platform } from './platform'
+import { applyAppearance, loadSettings, onSettingsChanged, saveSettings, type Settings } from './settings'
+import { createSettingsDialog } from './settings-ui'
 import * as source from './source'
 
 declare global {
@@ -33,11 +36,31 @@ let sourceBaseline = ''
 let sourceBaselineDirty = false
 let lastReportedDirty = false
 
+let settings: Settings = await loadSettings()
+applyAppearance(settings)
+
 const editor = await createEditor(editorEl, {
   onChange: scheduleRefresh,
   resolveImage: (src) => platform.resolveImage(src, filePath),
   openLink: (href) => platform.openLink(href),
+  onCommand: (id) => void run(id),
+  onImageFiles: (files, pos) => void insertImages(files.map((f) => ({ kind: 'data', data: f, name: f.name })), pos),
+  onPastedImageUrls: (urls) => void localizeOnlineImages(urls),
 })
+
+function applySettings(next: Settings) {
+  settings = next
+  applyAppearance(settings)
+  editor.setSpellcheck(settings.spellcheck)
+  sourceEl.spellcheck = settings.spellcheck
+  settingsDialog.refresh()
+  scheduleRefresh()
+}
+const settingsDialog = createSettingsDialog(() => settings, (next) => {
+  applySettings(next)
+  void saveSettings(next)
+})
+onSettingsChanged(applySettings)
 
 const currentMarkdown = () => (mode === 'source' ? sourceEl.value : editor.getMarkdown())
 
@@ -86,6 +109,14 @@ function refresh() {
     lastReportedDirty = dirty
     void invoke('set_dirty', { dirty })
   }
+  scheduleAutoSave(dirty)
+}
+
+let autoSaveTimer: number | undefined
+function scheduleAutoSave(dirty: boolean) {
+  clearTimeout(autoSaveTimer)
+  if (!settings.autoSave || !dirty || !filePath) return
+  autoSaveTimer = window.setTimeout(() => { if (isDirty()) void saveFile() }, 1500)
 }
 
 // ---------------------------------------------------------------------------
@@ -190,6 +221,63 @@ async function writeTo(path: string): Promise<boolean> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+/** Images go next to the document, so an untitled one has to be saved first. */
+async function ensureSaved(): Promise<string | null> {
+  const ok = await platform.ask('Save this document first? Images are stored relative to the document’s location.', 'Save…')
+  if (!ok) return null
+  return (await saveAs()) ? filePath : null
+}
+
+function frontMatterFolder() {
+  if (mode === 'rich') return editor.frontMatter('typora-copy-images-to')
+  const m = /^---\n[\s\S]*?^typora-copy-images-to:\s*(.+?)\s*$[\s\S]*?^---$/m.exec(sourceEl.value)
+  return m ? m[1].replace(/^(['"])(.*)\1$/, '$2') : null
+}
+
+/** Copies/saves images according to the settings and inserts them (at `pos` or the caret). */
+async function insertImages(sources: ImageSource[], pos?: number) {
+  for (const image of sources) {
+    try {
+      const src = await placeImage(image, { settings, docPath: filePath, frontMatterFolder: frontMatterFolder(), ensureSaved })
+      if (!src) continue
+      const alt = image.kind === 'data' ? imageAlt(image.name) || imageAlt(src) : imageAlt(src)
+      if (mode === 'source') {
+        const at = sourceEl.selectionStart
+        sourceEl.setRangeText(`![${alt}](${src})`, at, sourceEl.selectionEnd, 'end')
+        sourceEl.dispatchEvent(new Event('input'))
+      } else {
+        editor.insertImage(src, alt, pos)
+        pos = undefined
+      }
+    } catch (err) {
+      alert(`Could not insert the image.\n\n${err}`)
+    }
+  }
+}
+
+/** "Apply above rules to online images": download images that came in with pasted web content. */
+async function localizeOnlineImages(urls: string[]) {
+  if (!native || !settings.imageApplyOnline || mode !== 'rich') return
+  for (const url of new Set(urls)) {
+    try {
+      const local = await placeImage({ kind: 'url', url }, { settings, docPath: filePath, frontMatterFolder: frontMatterFolder(), ensureSaved })
+      if (local && local !== url) editor.replaceImageSrc(url, local)
+    } catch (err) {
+      console.warn('Could not download', url, err)
+    }
+  }
+}
+
+async function insertImageDialog() {
+  const picked = await platform.pickImages()
+  if (!picked.length) return
+  await insertImages(picked.map((p): ImageSource => (typeof p === 'string' ? { kind: 'file', path: p } : { kind: 'data', data: p, name: p.name })))
+}
+
 /** Resolves true when the window may close (saved, discarded or nothing to save). */
 async function confirmClose(): Promise<boolean> {
   if (!isDirty()) return true
@@ -213,8 +301,8 @@ function applyZoom() {
 function safeGet(key: string) { try { return localStorage.getItem(key) } catch { return null } }
 function safeSet(key: string, value: string) { try { localStorage.setItem(key, value) } catch { /* ignore */ } }
 
-const BLOCKS = new Set<string>(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'quote', 'bullet_list', 'ordered_list', 'code_block', 'hr', 'table'])
-const INLINE = new Set<string>(['bold', 'italic', 'code', 'strike'])
+const BLOCKS = new Set(BLOCK_COMMANDS)
+const INLINE = new Set(INLINE_COMMANDS)
 
 async function run(command: string) {
   if (BLOCKS.has(command)) {
@@ -233,6 +321,8 @@ async function run(command: string) {
     case 'save': return void saveFile()
     case 'save_as': return void saveAs()
     case 'toggle_source': return setMode(mode === 'rich' ? 'source' : 'rich')
+    case 'image': return insertImageDialog()
+    case 'settings': return settingsDialog.open()
     case 'undo': return mode === 'source' ? void document.execCommand('undo') : editor.undo()
     case 'redo': return mode === 'source' ? void document.execCommand('redo') : editor.redo()
     case 'zoom_in': zoom = Math.min(2, +(zoom + 0.1).toFixed(2)); return applyZoom()
@@ -263,17 +353,27 @@ sourceEl.addEventListener('keydown', (e) => source.handleKey(sourceEl, e))
 scroller.addEventListener('mousedown', (e) => {
   if (e.target !== scroller) return
   e.preventDefault()
-  if (mode === 'source') sourceEl.focus()
-  else editor.focus()
+  if (mode === 'source') {
+    sourceEl.focus()
+    sourceEl.setSelectionRange(sourceEl.value.length, sourceEl.value.length)
+  } else {
+    editor.focusEnd()
+  }
 })
 
 if (native) {
   const win = getCurrentWebviewWindow()
   await win.listen<string>('menu', (e) => run(e.payload))
   await win.listen('files-pending', () => takePendingFiles())
-  // Dropping Markdown files onto a window opens them.
+  // Dropped Markdown files open; dropped images are inserted where they land.
   await getCurrentWebview().onDragDropEvent(async (e) => {
     if (e.payload.type !== 'drop') return
+    const images = e.payload.paths.filter((p) => IMAGE_EXT.test(p))
+    if (images.length) {
+      const { x, y } = e.payload.position
+      const pos = editor.posAtCoords(x / devicePixelRatio, y / devicePixelRatio) ?? undefined
+      await insertImages(images.map((path) => ({ kind: 'file', path })), pos)
+    }
     for (const path of e.payload.paths) if (/\.(md|markdown|mdown|mkd|txt)$/i.test(path)) await openPath(path)
   })
   await win.onCloseRequested(async (e) => {
@@ -286,7 +386,8 @@ if (native) {
   const shortcuts: Record<string, string> = {
     'o': 'open', 's': 'save', 'S': 'save_as', '/': 'toggle_source',
     '1': 'h1', '2': 'h2', '3': 'h3', '4': 'h4', '5': 'h5', '6': 'h6', '0': 'paragraph',
-    '=': 'zoom_in', '-': 'zoom_out', 'e': 'code', 'X': 'strike',
+    '=': 'zoom_in', '-': 'zoom_out', 'e': 'code', 'X': 'strike', 'H': 'highlight', 'k': 'link',
+    'm': 'math_inline', 'B': 'math_block', ',': 'settings', 'I': 'image',
   }
   window.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || e.altKey) return
@@ -306,5 +407,6 @@ async function takePendingFiles() {
 }
 
 document.body.dataset.mode = mode
+applySettings(settings)
 refresh()
 editor.focus()
