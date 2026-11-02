@@ -43,6 +43,24 @@ darin steht, und sonst die gerenderte Formel. Backspace am Anfang einer
 bearbeitet sie. Gespeichert wird immer Markdown, das Typora, Obsidian und
 GitHub verstehen.
 
+## Titelleiste und Seitenleiste
+
+- **Dateiname oben in der Mitte** (wie bei Pages/TextEdit): Klick öffnet ein
+  Popover mit *Name* und *Ort*. Damit benennst du die Datei um oder verschiebst
+  sie in einen anderen Ordner. Ein neues Dokument wird darüber direkt
+  gespeichert. „— Edited“ zeigt ungespeicherte Änderungen.
+- **Rechts oben:** „207 Words ⌃⌄“ (umschaltbar auf Zeichen, Absätze,
+  Lesezeit), Source-Modus, Gliederung und Seitenleiste.
+- **Seitenleiste (⇧⌘L):** alle Ordner, in denen du Dateien geöffnet oder
+  gespeichert hast, aufklappbar mit Unterordnern und Markdown-Dateien. **+**
+  am Ordner legt dort sofort eine neue Datei an, **×** entfernt den Ordner aus
+  der Liste, „+ Add Folder…“ fügt einen hinzu. Ein Klick auf eine Datei öffnet
+  sie im selben Fenster. Breite per Ziehen am Rand einstellbar.
+- **Gliederung (⇧⌘1):** alle Überschriften des Dokuments zum Springen.
+
+Im Browser lässt sich das mit `npm run dev` und `http://localhost:1420/?demo`
+ausprobieren (Beispielordner im Speicher).
+
 ## Tastenkürzel
 
 | Kürzel        | Aktion                                  |
@@ -59,6 +77,7 @@ GitHub verstehen.
 | ⇧⌘H / ⌘K      | Hervorheben / Link                      |
 | ⇧⌘I           | Bild einfügen…                          |
 | ⌘,            | Einstellungen                           |
+| ⇧⌘L / ⇧⌘1     | Seitenleiste / Gliederung               |
 | ⌘= / ⌘- / ⇧⌘0 | Zoom                                    |
 
 ## Einstellungen (⌘,)
@@ -114,6 +133,9 @@ src/
     popups.ts   „/“-Menü und Link-Editor
   images.ts     Regeln, wohin eingefügte Bilder kopiert werden
   settings.ts   Einstellungen (+ settings-ui.ts für den Dialog)
+  titlebar.ts   Titelleiste: Name/Ort-Popover, Wortzahl, Buttons
+  sidebar.ts    Seitenleiste: Ordner, neue Datei, Gliederung
+  workspace.ts  Ordner auflisten, Dateien anlegen/umbenennen, letzte Ordner
   source.ts     Source-Modus (Textarea mit Listen-Fortsetzung, Tab, Formatierung)
   platform.ts   Tauri-Anbindung bzw. Browser-Fallback
   style.css     Theme (hell/dunkel)
