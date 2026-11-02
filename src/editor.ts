@@ -474,6 +474,36 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
       if (tr.docChanged) v.dispatch(tr)
     },
 
+    headings() {
+      const out: { level: number; text: string; pos: number }[] = []
+      view().state.doc.descendants((node, pos) => {
+        if (node.type.name === 'heading') out.push({ level: node.attrs.level, text: node.textContent, pos })
+        return node.isBlock && node.type.name !== 'heading'
+      })
+      return out
+    },
+
+    /** Scrolls the block at `pos` to the top and puts the caret at its end. */
+    goTo(pos: number) {
+      const v = view()
+      const node = v.state.doc.nodeAt(pos)
+      if (!node) return
+      v.dispatch(v.state.tr.setSelection(TextSelection.create(v.state.doc, pos + node.nodeSize - 1)))
+      ;(v.nodeDOM(pos) as HTMLElement | null)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      v.focus()
+    },
+
+    stats() {
+      const doc = view().state.doc
+      const text = doc.textBetween(0, doc.content.size, '\n', ' ')
+      let paragraphs = 0
+      doc.descendants((node) => {
+        if (node.isTextblock && node.textContent.trim()) paragraphs++
+        return !node.isTextblock
+      })
+      return { text, paragraphs }
+    },
+
     posAtCoords(left: number, top: number) {
       return view().posAtCoords({ left, top })?.pos ?? null
     },
