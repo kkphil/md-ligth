@@ -111,6 +111,7 @@ Voraussetzungen: Node 20+, Rust (`rustup`) und die Xcode Command Line Tools.
 npm install
 npm run app:dev     # native App mit Hot Reload
 npm run app:build   # baut md-light.app + .dmg nach src-tauri/target/release/bundle/
+npm run app:install # (macOS) baut die App, legt sie in /Applications und startet sie
 npm run dev         # nur das Frontend im Browser (http://localhost:1420)
 ```
 
