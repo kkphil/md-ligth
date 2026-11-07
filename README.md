@@ -103,6 +103,18 @@ Außerdem: `.md`-Dateien per Doppelklick im Finder, „Öffnen mit“, aufs
 Dock-Icon oder ins Fenster ziehen. Ungespeicherte Änderungen werden beim
 Schließen und Beenden abgefragt. Hell/Dunkel folgt dem System.
 
+## Quick Look (Leertaste im Finder)
+
+`npm run app:install` baut zusätzlich eine Quick-Look-Erweiterung in die App:
+Markdown-Dateien erscheinen mit der Leertaste **formatiert** statt als
+Rohtext. Das gilt für Überschriften, Listen, Checkboxen, Tabellen,
+LaTeX-Formeln, Code mit Syntax-Highlighting, Callouts, `==Highlight==`, `[TOC]`
+und Bilder relativ zur Datei.
+
+Falls die Vorschau nicht erscheint: In den *Systemeinstellungen → Allgemein →
+Anmeldeobjekte & Erweiterungen → Quick Look* „md-light Preview“ aktivieren und
+im Terminal `qlmanage -r` ausführen. Der Code liegt in `quicklook/`.
+
 ## Entwickeln
 
 Voraussetzungen: Node 20+, Rust (`rustup`) und die Xcode Command Line Tools.
@@ -111,7 +123,7 @@ Voraussetzungen: Node 20+, Rust (`rustup`) und die Xcode Command Line Tools.
 npm install
 npm run app:dev     # native App mit Hot Reload
 npm run app:build   # baut md-light.app + .dmg nach src-tauri/target/release/bundle/
-npm run app:install # (macOS) baut die App, legt sie in /Applications und startet sie
+npm run app:install # (macOS) baut App + Quick-Look-Vorschau, installiert nach /Applications
 npm run dev         # nur das Frontend im Browser (http://localhost:1420)
 ```
 

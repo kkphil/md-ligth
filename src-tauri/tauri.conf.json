@@ -15,7 +15,9 @@
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost https: http: data: blob:; connect-src ipc: http://ipc.localhost",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
@@ -33,11 +35,19 @@
     ],
     "fileAssociations": [
       {
-        "ext": ["md", "markdown", "mdown", "mkd"],
+        "ext": [
+          "md",
+          "markdown",
+          "mdown",
+          "mkd"
+        ],
         "name": "Markdown Document",
         "description": "Markdown document",
         "role": "Editor",
-        "mimeType": "text/markdown"
+        "mimeType": "text/markdown",
+        "contentTypes": [
+          "net.daringfireball.markdown"
+        ]
       }
     ],
     "macOS": {
