@@ -196,7 +196,8 @@ Die Seitenleiste hat zwei Bereiche:
 
 - **Recent:** einzeln geöffnete Dateien, die neueste oben. Eine Datei zu
   öffnen fügt *nicht* ihren ganzen Ordner hinzu. **×** nimmt eine Datei aus
-  der Liste.
+  der Liste. Dateien aus einem angehefteten Ordner erscheinen hier nicht:
+  Stattdessen klappt ihr Ordner auf, und die Datei ist dort markiert.
 - **Folders:** Ordner, die du bewusst öffnest, mit **File → Open Folder…**
   (⇧⌘O) oder dem **+** neben „Folders“. Sie bleiben dauerhaft in der
   Seitenleiste, auch nach dem Beenden der App. Ordner lassen sich aufklappen

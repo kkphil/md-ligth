@@ -171,10 +171,14 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
     return head
   }
 
+  /** True for files inside a pinned folder (at any depth); those show in the folder tree instead. */
+  const inPinnedFolder = (path: string) => folders.some((dir) => path.startsWith(dir.endsWith('/') ? dir : `${dir}/`))
+
   function renderRecent(): HTMLElement[] {
-    if (!recent.length) return []
+    const files = recent.filter((path) => !inPinnedFolder(path))
+    if (!files.length) return []
     const current = hooks.currentPath()
-    const rows = recent.map((path) => {
+    const rows = files.map((path) => {
       const r = row(0, `sb-file sb-recent${path === current ? ' current' : ''}`,
         `<span class="sb-icon">${icons.file}</span><span class="sb-name"></span><span class="sb-where"></span>
          <span class="sb-actions"><button type="button" data-act="forget" title="Remove from Recent">×</button></span>`)
