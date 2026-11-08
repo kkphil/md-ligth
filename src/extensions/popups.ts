@@ -3,6 +3,7 @@ import type { Mark, MarkType } from '@milkdown/kit/prose/model'
 import { type EditorState, Plugin, PluginKey, TextSelection } from '@milkdown/kit/prose/state'
 import type { EditorView } from '@milkdown/kit/prose/view'
 import { $prose } from '@milkdown/kit/utils'
+import { parseTableSize } from './table'
 
 // ---------------------------------------------------------------- slash menu
 
@@ -21,7 +22,7 @@ export const SLASH_ITEMS: SlashItem[] = [
   { id: 'code_block', label: 'Code block', hint: '```', icon: '{}', keywords: 'code block snippet programm' },
   { id: 'math_block', label: 'Math block', hint: '$$', icon: '∑', keywords: 'math latex formula equation formel mathe katex' },
   { id: 'math_inline', label: 'Inline math', hint: '$x$', icon: '𝑥', keywords: 'math latex inline formel' },
-  { id: 'table', label: 'Table', hint: '| a | b |', icon: '▦', keywords: 'table grid tabelle' },
+  { id: 'table', label: 'Table', hint: '/table 3:5', icon: '▦', keywords: 'table grid tabelle' },
   { id: 'image', label: 'Image…', hint: '![]()', icon: '🖼', keywords: 'image picture photo bild foto' },
   { id: 'hr', label: 'Divider', hint: '---', icon: '—', keywords: 'divider horizontal rule line trennlinie' },
   { id: 'toc', label: 'Table of contents', hint: '[TOC]', icon: '☰', keywords: 'toc table of contents inhaltsverzeichnis' },
@@ -31,13 +32,29 @@ export const SLASH_ITEMS: SlashItem[] = [
 
 interface SlashState { from: number; query: string }
 
+/** Menu entries for a query; `table 3:5` (or `tabelle 3x5`, `3:5`) offers a table of that size. */
+function itemsFor(query: string): SlashItem[] {
+  const sized = /^(?:table|tabelle|tab)?\s*(.*)$/.exec(query)
+  const size = sized ? parseTableSize(sized[1]) : null
+  if (size) {
+    return [{
+      id: `table:${size.cols}:${size.rows}`,
+      label: `Table ${size.cols} × ${size.rows}`,
+      hint: `${size.cols} columns, ${size.rows} rows`,
+      icon: '▦',
+      keywords: '',
+    }]
+  }
+  return SLASH_ITEMS.filter((it) => !query || it.label.toLowerCase().includes(query) || it.keywords.includes(query))
+}
+
 function slashContext(state: EditorState): SlashState | null {
   const { selection } = state
   if (!(selection instanceof TextSelection) || !selection.empty) return null
   const { $from } = selection
   if ($from.parent.type.spec.code || $from.parent.type.name !== 'paragraph') return null
   const before = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼')
-  const m = /(?:^|\s)\/([\p{L}\p{N} -]{0,20})$/u.exec(before)
+  const m = /(?:^|\s)\/([\p{L}\p{N} :×-]{0,24})$/u.exec(before)
   if (!m || m[1].startsWith(' ')) return null
   return { from: $from.pos - m[1].length - 1, query: m[1].trim().toLowerCase() }
 }
@@ -86,7 +103,7 @@ export function slashMenu(onCommand: (id: string) => void) {
             const next = slashContext(v.state)
             if (!next || next.from === dismissedAt || !v.hasFocus()) return hide()
             const query = next.query
-            items = SLASH_ITEMS.filter((it) => !query || it.label.toLowerCase().includes(query) || it.keywords.includes(query))
+            items = itemsFor(query)
             if (!items.length) return hide()
             if (!ctx || ctx.query !== query) active = 0
             ctx = next
