@@ -55,6 +55,22 @@ export function inline(el: HTMLTextAreaElement, cmd: InlineCommand) {
   }
 }
 
+/** An empty GFM table: `cols` columns, `rows` rows including the header row. */
+function tableMarkdown(cols: number, rows: number) {
+  const line = (cell: string) => `|${Array(cols).fill(cell).join('|')}|`
+  return [line('     '), line(' --- '), ...Array(Math.max(1, rows - 1)).fill(line('     '))].join('\n')
+}
+
+/** Inserts a `cols` × `rows` table on its own lines. */
+export function table(el: HTMLTextAreaElement, cols: number, rows: number) {
+  const { selectionStart: s, value } = el
+  const { start, end } = lineBounds(value, s)
+  const text = tableMarkdown(cols, rows)
+  if (value.slice(start, end).trim() === '') return replace(el, start, end, text, start + 2)
+  const insert = `\n\n${text}\n`
+  replace(el, end, end, insert, end + 4)
+}
+
 const BLOCK_PREFIX = /^(\s{0,3})(#{1,6}\s+|>\s?|[-*+]\s+(\[[ xX]\]\s+)?|\d+[.)]\s+)?/
 
 export function block(el: HTMLTextAreaElement, cmd: BlockCommand) {
@@ -71,7 +87,7 @@ export function block(el: HTMLTextAreaElement, cmd: BlockCommand) {
 
   switch (cmd) {
     case 'hr': return insertBlock('---')
-    case 'table': return insertBlock('| Column | Column |\n| ------ | ------ |\n|        |        |')
+    case 'table': return insertBlock(tableMarkdown(3, 3))
     case 'math_block': return insertBlock('$$\n\n$$')
     case 'toc': return insertBlock('[TOC]')
     case 'callout': return insertBlock('> [!NOTE]\n> ')

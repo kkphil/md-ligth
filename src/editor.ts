@@ -39,6 +39,7 @@ import { code, configurePrism } from './extensions/code'
 import { configureSerializer, frontMatterValue, markdownExtras } from './extensions/markdown'
 import { insertMathBlock, insertMathInline, math } from './extensions/math'
 import { linkEditor, slashMenu } from './extensions/popups'
+import { createTable, tables } from './extensions/table'
 import { IMAGE_EXT } from './images'
 
 export interface EditorOptions {
@@ -295,6 +296,8 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
     // Empty lines are just spacing, not `<br />` in the file.
     .use(commonmark.filter((plugin) => !(remarkPreserveEmptyLinePlugin as unknown[]).includes(plugin)))
     .use(gfm)
+    // Before `indent`, so Tab in the last table cell can add a row.
+    .use(tables)
     .use(math)
     .use(markdownExtras)
     .use(code)
@@ -333,10 +336,8 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
     v.dispatch(tr.scrollIntoView())
   }
 
-  const insertTable = () => editor.action((ctx) => {
-    const table = buildTable(ctx, view().state.schema, ['', ''])
-    insertBlock(table, 4)
-  })
+  /** Inserts a `cols` × `rows` table (rows include the header) with the caret in its first cell. */
+  const insertTable = (cols = 3, rows = 3) => insertBlock(createTable(view().state.schema, cols, rows), 4)
 
   return {
     getMarkdown: (): string => tidyMarkdown(editor.action(getMarkdown())),
@@ -356,6 +357,11 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
     text: () => view().state.doc.textBetween(0, view().state.doc.content.size, '\n', ' '),
     frontMatter: (key: string) => frontMatterValue(view().state.doc, key),
     setSpellcheck(on: boolean) { view().dom.spellcheck = on },
+
+    insertTable(cols: number, rows: number) {
+      insertTable(cols, rows)
+      view().focus()
+    },
 
     focus() { view().focus() },
     /** Caret to the end of the document (clicking below the text, like Typora). */
@@ -450,17 +456,51 @@ export async function createEditor(root: HTMLElement, opts: EditorOptions) {
       view().focus()
     },
 
-    /** Inserts an image at `pos` (or the caret). */
+    /**
+     * Inserts an image on its own line at `pos` (or the caret) and puts the
+     * caret on the line below it, so typing continues under the picture.
+     */
     insertImage(src: string, alt = '', pos?: number) {
       const v = view()
       const { state } = v
       const { schema } = state
       const image = schema.nodes.image.create({ src, alt, title: '' })
-      const at = Math.min(pos ?? state.selection.from, state.doc.content.size)
-      const tr = state.doc.resolve(at).parent.inlineContent
-        ? state.tr.insert(at, image)
-        : state.tr.insert(at, schema.nodes.paragraph.create(null, image))
-      v.dispatch(tr.scrollIntoView())
+      const $at = state.doc.resolve(Math.min(pos ?? state.selection.from, state.doc.content.size))
+      const block = $at.parent
+      const cell = $at.depth > 1 && /^table_(cell|header)$/.test($at.node(-1).type.name)
+
+      // Table cells hold a single line: the image goes inline there.
+      if (cell) {
+        const tr = state.tr.insert($at.pos, image)
+        v.dispatch(tr.setSelection(TextSelection.create(tr.doc, $at.pos + image.nodeSize)).scrollIntoView())
+        v.focus()
+        return
+      }
+
+      const line = schema.nodes.paragraph.create(null, image)
+      let tr = state.tr
+      let below: number // position right after the image's line
+      if (!block.isTextblock || $at.depth === 0) {
+        tr = tr.insert($at.pos, line)
+        below = $at.pos + line.nodeSize
+      } else if (block.type.name === 'paragraph' && block.content.size === 0) {
+        tr = tr.replaceWith($at.before(), $at.after(), line) // an empty line becomes the image
+        below = $at.before() + line.nodeSize
+      } else if ($at.parentOffset === 0 && !block.type.spec.code) {
+        // Caret at the start of a line: the image goes above it, the caret stays on that line.
+        tr = tr.insert($at.before(), line)
+        const start = $at.before() + line.nodeSize + 1
+        v.dispatch(tr.setSelection(TextSelection.create(tr.doc, start)).scrollIntoView())
+        v.focus()
+        return
+      } else {
+        tr = tr.insert($at.after(), line)
+        below = $at.after() + line.nodeSize
+      }
+
+      const next = tr.doc.resolve(below).nodeAfter
+      if (!(next?.type.name === 'paragraph' && next.content.size === 0)) tr.insert(below, schema.nodes.paragraph.create())
+      v.dispatch(tr.setSelection(TextSelection.create(tr.doc, below + 1)).scrollIntoView())
       v.focus()
     },
 

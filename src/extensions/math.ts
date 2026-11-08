@@ -81,6 +81,15 @@ function mathView(displayMode: boolean) {
     const preview = document.createElement(displayMode ? 'div' : 'span')
     preview.className = 'math-render'
     preview.contentEditable = 'false'
+    if (displayMode) {
+      // The label sits outside the editable source: decorations *inside* it
+      // (like CSS ::before) confuse WebKit's caret placement.
+      const label = document.createElement('div')
+      label.className = 'math-label'
+      label.contentEditable = 'false'
+      label.textContent = 'LaTeX'
+      dom.append(label)
+    }
     dom.append(source, preview)
 
     let tex: string | null = null
@@ -122,8 +131,16 @@ export const mathEditing = $prose(() => new Plugin({
   key: new PluginKey('mdl-math-editing'),
   props: {
     decorations(state) {
-      const { $from, $to } = state.selection
+      const { $from, $to, empty } = state.selection
       const decos: Decoration[] = []
+      // Like Typora, inline math also shows its source while the caret touches it,
+      // so the caret sits next to text instead of next to rendered math.
+      if (empty) {
+        const before = $from.nodeBefore
+        const after = $from.nodeAfter
+        if (before?.type.name === 'math_inline') decos.push(Decoration.node($from.pos - before.nodeSize, $from.pos, { class: 'editing' }))
+        if (after?.type.name === 'math_inline') decos.push(Decoration.node($from.pos, $from.pos + after.nodeSize, { class: 'editing' }))
+      }
       for (const $pos of [$from, $to]) {
         for (let d = $pos.depth; d > 0; d--) {
           const node = $pos.node(d)
@@ -197,6 +214,57 @@ export const mathBlockKeymap = $prose((ctx) => keymap({
   },
 }))
 
+/** Leaves a math or code block for the line below it (creating one if needed). */
+function exitBlock(state: EditorState, dispatch: ((tr: Transaction) => void) | undefined, trimTrailingNewline: boolean) {
+  const { $from } = state.selection
+  const block = $from.parent
+  if (!dispatch) return true
+  let tr = state.tr
+  let blockEnd = $from.after()
+  if (trimTrailingNewline && block.textContent.endsWith('\n')) {
+    const end = $from.end()
+    tr = tr.delete(end - 1, end)
+    blockEnd -= 1
+  }
+  const next = tr.doc.resolve(blockEnd).nodeAfter
+  if (next?.type.name === 'paragraph' && next.content.size === 0) {
+    tr.setSelection(TextSelection.create(tr.doc, blockEnd + 1))
+  } else {
+    tr.insert(blockEnd, state.schema.nodes.paragraph.create())
+    tr.setSelection(TextSelection.create(tr.doc, blockEnd + 1))
+  }
+  dispatch(tr.scrollIntoView())
+  return true
+}
+
+const inLeavableBlock = (state: EditorState) => {
+  const { $from, empty } = state.selection
+  const name = $from.parent.type.name
+  return empty && (name === 'math_block' || name === 'code_block')
+}
+
+/**
+ * Getting out of math and code blocks: Enter on an empty last line, ⌘↩, or
+ * ↓ on the last line of a block that nothing follows.
+ */
+export const leaveBlockKeymap = $prose(() => keymap({
+  Enter: (state, dispatch) => {
+    if (!inLeavableBlock(state)) return false
+    const { $from } = state.selection
+    const atEnd = $from.parentOffset === $from.parent.content.size
+    if (!atEnd || !$from.parent.textContent.endsWith('\n')) return false
+    return exitBlock(state, dispatch, true)
+  },
+  'Mod-Enter': (state, dispatch) => (inLeavableBlock(state) ? exitBlock(state, dispatch, false) : false),
+  ArrowDown: (state, dispatch) => {
+    if (!inLeavableBlock(state)) return false
+    const { $from } = state.selection
+    const onLastLine = !$from.parent.textContent.slice($from.parentOffset).includes('\n')
+    const isLast = $from.index($from.depth - 1) === $from.node($from.depth - 1).childCount - 1
+    return onLastLine && isLast ? exitBlock(state, dispatch, false) : false
+  },
+}))
+
 /** Wraps the selection in inline math, or inserts an empty formula. */
 export function insertMathInline(view: EditorView) {
   const { state } = view
@@ -227,4 +295,5 @@ export const math = [
   mathEditing,
   mathInlineInputRule,
   mathBlockKeymap,
+  leaveBlockKeymap,
 ].flat()
