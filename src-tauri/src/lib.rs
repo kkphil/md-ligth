@@ -317,56 +317,178 @@ async fn rename_file(from: String, to: String) -> Result<(), String> {
     Ok(())
 }
 
-const MAX_RECENT_FOLDERS: usize = 30;
-
-fn recent_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app.path().app_config_dir().map_err(err)?.join("recent-folders.json"))
+/// The two path lists behind the sidebar: folders pinned by the user (kept until
+/// removed) and recently opened files.
+#[derive(Clone, Copy)]
+enum PathList {
+    Folders,
+    Files,
 }
 
-fn read_recent(app: &AppHandle) -> Vec<String> {
-    recent_path(app)
-        .ok()
-        .and_then(|p| std::fs::read_to_string(p).ok())
-        .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|d| Path::new(d).is_dir())
-        .collect()
+impl PathList {
+    fn parse(kind: &str) -> Result<Self, String> {
+        match kind {
+            "folders" => Ok(Self::Folders),
+            "files" => Ok(Self::Files),
+            _ => Err(format!("unknown list {kind}")),
+        }
+    }
+    fn file_name(self) -> &'static str {
+        match self {
+            Self::Folders => "pinned-folders.json",
+            Self::Files => "recent-files.json",
+        }
+    }
+    fn event(self) -> &'static str {
+        match self {
+            Self::Folders => "folders-changed",
+            Self::Files => "recent-files-changed",
+        }
+    }
+    fn exists(self, path: &str) -> bool {
+        match self {
+            Self::Folders => Path::new(path).is_dir(),
+            Self::Files => Path::new(path).is_file(),
+        }
+    }
 }
 
-fn write_recent(app: &AppHandle, folders: Vec<String>) -> Result<Vec<String>, String> {
-    let path = recent_path(app)?;
+const MAX_RECENT_FILES: usize = 20;
+
+fn list_file(app: &AppHandle, list: PathList) -> Result<PathBuf, String> {
+    Ok(app.path().app_config_dir().map_err(err)?.join(list.file_name()))
+}
+
+fn read_list(app: &AppHandle, list: PathList) -> Vec<String> {
+    let read = |path: PathBuf| {
+        std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+    };
+    let Ok(path) = list_file(app, list) else { return Vec::new() };
+    let stored = read(path.clone()).or_else(|| match list {
+        // Earlier versions added every folder a file was opened in; keep those as pinned.
+        PathList::Folders => read(path.with_file_name("recent-folders.json")),
+        PathList::Files => None,
+    });
+    stored.unwrap_or_default().into_iter().filter(|p| list.exists(p)).collect()
+}
+
+fn write_list(app: &AppHandle, list: PathList, paths: Vec<String>) -> Result<Vec<String>, String> {
+    let path = list_file(app, list)?;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(err)?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(&folders).map_err(err)?).map_err(err)?;
-    app.emit("recent-changed", &folders).map_err(err)?;
-    Ok(folders)
+    std::fs::write(&path, serde_json::to_string_pretty(&paths).map_err(err)?).map_err(err)?;
+    app.emit(list.event(), &paths).map_err(err)?;
+    Ok(paths)
 }
 
-/// Folders the user opened or saved files in, most recent first.
+/// `kind` is "folders" (pinned folders) or "files" (recently opened files, newest first).
 #[tauri::command]
-fn recent_folders(app: AppHandle) -> Vec<String> {
-    read_recent(&app)
+fn list_paths(app: AppHandle, kind: String) -> Result<Vec<String>, String> {
+    Ok(read_list(&app, PathList::parse(&kind)?))
 }
 
+/// Pins a folder (appended, order kept) or records an opened file (moved to the front).
 #[tauri::command]
-fn add_recent_folder(app: AppHandle, dir: String) -> Result<Vec<String>, String> {
-    let mut folders = read_recent(&app);
-    if folders.first() == Some(&dir) {
-        return Ok(folders);
+fn add_path(app: AppHandle, kind: String, path: String) -> Result<Vec<String>, String> {
+    let list = PathList::parse(&kind)?;
+    let mut paths = read_list(&app, list);
+    match list {
+        PathList::Folders => {
+            if paths.contains(&path) {
+                return Ok(paths);
+            }
+            paths.push(path);
+        }
+        PathList::Files => {
+            if paths.first() == Some(&path) {
+                return Ok(paths);
+            }
+            paths.retain(|p| p != &path);
+            paths.insert(0, path);
+            paths.truncate(MAX_RECENT_FILES);
+        }
     }
-    folders.retain(|d| d != &dir);
-    folders.insert(0, dir);
-    folders.truncate(MAX_RECENT_FOLDERS);
-    write_recent(&app, folders)
+    write_list(&app, list, paths)
 }
 
 #[tauri::command]
-fn remove_recent_folder(app: AppHandle, dir: String) -> Result<Vec<String>, String> {
-    let mut folders = read_recent(&app);
-    folders.retain(|d| d != &dir);
-    write_recent(&app, folders)
+fn remove_path(app: AppHandle, kind: String, path: String) -> Result<Vec<String>, String> {
+    let list = PathList::parse(&kind)?;
+    let mut paths = read_list(&app, list);
+    paths.retain(|p| p != &path);
+    write_list(&app, list, paths)
+}
+
+/// Replaces `from` by `to` after a rename/move, keeping its place in the list.
+#[tauri::command]
+fn rename_path(app: AppHandle, kind: String, from: String, to: String) -> Result<Vec<String>, String> {
+    let list = PathList::parse(&kind)?;
+    let paths: Vec<String> = read_list(&app, list).into_iter().map(|p| if p == from { to.clone() } else { p }).collect();
+    write_list(&app, list, paths)
+}
+
+// ---------------------------------------------------------------------------
+// PDF export
+// ---------------------------------------------------------------------------
+
+/// Writes the window's document to `path` as a paginated PDF. The page's print
+/// styles (src/style.css) hide the editor chrome. On macOS this runs without a
+/// print dialog; elsewhere the system print dialog opens instead.
+#[tauri::command]
+fn export_pdf(window: WebviewWindow, path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        window
+            .with_webview(move |webview| unsafe { mac_pdf::export(webview.inner(), &path) })
+            .map_err(err)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = path;
+        window.print().map_err(err)
+    }
+}
+
+#[cfg(target_os = "macos")]
+mod mac_pdf {
+    use objc2::runtime::ProtocolObject;
+    use objc2_app_kit::{NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob, NSPrintingPaginationMode};
+    use objc2_foundation::{NSCopying, NSString, NSURL};
+    use objc2_web_kit::WKWebView;
+
+    /// Must run on the main thread (Tauri's `with_webview` does).
+    pub unsafe fn export(webview: *mut std::ffi::c_void, path: &str) {
+        let webview: &WKWebView = &*webview.cast::<WKWebView>();
+        let Some(window) = webview.window() else { return };
+
+        let info = NSPrintInfo::sharedPrintInfo().copy();
+        info.setJobDisposition(NSPrintSaveJob);
+        let url = NSURL::fileURLWithPath(&NSString::from_str(path));
+        info.dictionary().setObject_forKey(&url, ProtocolObject::from_ref(NSPrintJobSavingURL));
+        // 2 cm margins, content scaled to the page width.
+        for set in [NSPrintInfo::setTopMargin, NSPrintInfo::setBottomMargin, NSPrintInfo::setLeftMargin, NSPrintInfo::setRightMargin] {
+            set(&info, 56.0);
+        }
+        info.setHorizontalPagination(NSPrintingPaginationMode::Fit);
+        info.setVerticalPagination(NSPrintingPaginationMode::Automatic);
+        info.setHorizontallyCentered(false);
+        info.setVerticallyCentered(false);
+
+        let operation = webview.printOperationWithPrintInfo(&info);
+        operation.setShowsPrintPanel(false);
+        operation.setShowsProgressPanel(false);
+        // Without a frame, WebKit's print view renders blank pages.
+        if let Some(view) = operation.view() {
+            view.setFrame(webview.bounds());
+        }
+        operation.runOperationModalForWindow_delegate_didRunSelector_contextInfo(
+            &window,
+            None,
+            None,
+            std::ptr::null_mut(),
+        );
+    }
 }
 
 /// Default place for new documents (~/Documents).
@@ -478,10 +600,11 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let file = SubmenuBuilder::new(app, "File")
         .item(&item("new", "New", Some("CmdOrCtrl+N"))?)
         .item(&item("open", "Open…", Some("CmdOrCtrl+O"))?)
-        .item(&item("add_folder", "Add Folder to Sidebar…", None)?)
+        .item(&item("add_folder", "Open Folder…", Some("CmdOrCtrl+Shift+O"))?)
         .separator()
         .item(&item("save", "Save", Some("CmdOrCtrl+S"))?)
         .item(&item("save_as", "Save As…", Some("CmdOrCtrl+Shift+S"))?)
+        .item(&item("export_pdf", "Export as PDF…", Some("CmdOrCtrl+Shift+E"))?)
         .separator()
         .item(&item("close", "Close Window", Some("CmdOrCtrl+W"))?);
     #[cfg(not(target_os = "macos"))]
@@ -627,9 +750,11 @@ pub fn run() {
             list_dir,
             create_file,
             rename_file,
-            recent_folders,
-            add_recent_folder,
-            remove_recent_folder,
+            list_paths,
+            add_path,
+            remove_path,
+            rename_path,
+            export_pdf,
             documents_dir
         ])
         .setup(|app| {

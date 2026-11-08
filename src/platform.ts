@@ -5,7 +5,7 @@
 import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import { ask, message, open, save } from '@tauri-apps/plugin-dialog'
-import { openUrl } from '@tauri-apps/plugin-opener'
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
 
 export const native = isTauri()
 
@@ -174,6 +174,21 @@ export const platform = {
       input.oncancel = () => resolve([])
       input.click()
     })
+  },
+
+  /** Asks where to put a PDF; null if cancelled. */
+  async pickPdfPath(suggested: string): Promise<string | null> {
+    const path = await save({ defaultPath: suggested, filters: [{ name: 'PDF', extensions: ['pdf'] }] })
+    if (!path) return null
+    return /\.pdf$/i.test(path) ? path : `${path}.pdf`
+  },
+
+  async exportPdf(path: string) {
+    await invoke('export_pdf', { path })
+  },
+
+  reveal(path: string) {
+    if (native) void revealItemInDir(path)
   },
 
   setTitle(title: string) {
