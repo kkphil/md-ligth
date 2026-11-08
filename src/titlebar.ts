@@ -97,7 +97,9 @@ export function createTitlebar(bar: HTMLElement, hooks: TitlebarHooks) {
     const path = hooks.docPath()
     const untitled = !path
     const ext = path ? extname(path) || '.md' : '.md'
-    const folders = await workspace.recentFolders()
+    // Pinned folders first, then the folders of recently opened files.
+    const [pinned, recentFiles] = await Promise.all([workspace.list('folders'), workspace.list('files')])
+    const folders = [...new Set([...pinned, ...recentFiles.map(dirname)])]
     const currentDir = path ? dirname(path) : folders[0] ?? (await workspace.documentsDir())
     const options = [currentDir, ...folders.filter((f) => f !== currentDir)]
     const names = options.map(folderName)

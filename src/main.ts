@@ -14,7 +14,8 @@ import { createSettingsDialog } from './settings-ui'
 import { createSidebar, type Heading } from './sidebar'
 import * as source from './source'
 import { createTitlebar, type Stats } from './titlebar'
-import { dirname } from './paths'
+import { basename, dirname, join, stem } from './paths'
+import { toast } from './toast'
 import { workspace } from './workspace'
 
 declare global {
@@ -119,10 +120,10 @@ function goToHeading(h: Heading) {
   scroller.scrollTo({ top: sourceEl.offsetTop + line * lineHeight - 16, behavior: 'smooth' })
 }
 
-/** Remembers the file's folder for the sidebar and highlights the file there. */
+/** Adds the file to "Recent" in the sidebar and highlights it there. */
 function noteFile(path: string) {
   if (!path.includes('/') && !path.includes('\\')) return // browser download, no real path
-  void workspace.addRecentFolder(dirname(path)).then(() => sidebar.reveal(path))
+  void workspace.add('files', path).then(() => sidebar.reveal(path))
 }
 
 const titlebar = createTitlebar($('titlebar'), {
@@ -260,6 +261,7 @@ async function moveTo(path: string): Promise<boolean> {
   if (!filePath || path === filePath) return true
   try {
     await workspace.rename(filePath, path)
+    await workspace.renameRecent(filePath, path)
     filePath = path
     refresh()
     noteFile(path)
@@ -347,8 +349,11 @@ async function insertImages(sources: ImageSource[], pos?: number) {
       if (!src) continue
       const alt = image.kind === 'data' ? imageAlt(image.name) || imageAlt(src) : imageAlt(src)
       if (mode === 'source') {
+        // On its own line, with the caret on the line below.
         const at = sourceEl.selectionStart
-        sourceEl.setRangeText(`![${alt}](${src})`, at, sourceEl.selectionEnd, 'end')
+        const value = sourceEl.value
+        const before = at > 0 && value[at - 1] !== '\n' ? '\n\n' : at > 1 && value[at - 2] !== '\n' ? '\n' : ''
+        sourceEl.setRangeText(`${before}![${alt}](${src})\n\n`, at, sourceEl.selectionEnd, 'end')
         sourceEl.dispatchEvent(new Event('input'))
       } else {
         editor.insertImage(src, alt, pos)
@@ -379,6 +384,27 @@ async function insertImageDialog() {
   await insertImages(picked.map((p): ImageSource => (typeof p === 'string' ? { kind: 'file', path: p } : { kind: 'data', data: p, name: p.name })))
 }
 
+// ---------------------------------------------------------------------------
+// PDF export: the editor itself is printed with the print styles in style.css.
+// ---------------------------------------------------------------------------
+
+async function exportPdf() {
+  if (mode === 'source') setMode('rich')
+  if (!native) return window.print()
+  const name = `${filePath ? stem(filePath) : 'Untitled'}.pdf`
+  const path = await platform.pickPdfPath(filePath ? join(dirname(filePath), name) : name)
+  if (!path) return
+  try {
+    // No caret or selection highlight in the PDF.
+    getSelection()?.removeAllRanges()
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    await platform.exportPdf(path)
+    toast(`Exported “${basename(path)}”`, { label: 'Show in Finder', run: () => platform.reveal(path) })
+  } catch (err) {
+    alert(`Could not export the PDF.\n\n${err}`)
+  }
+}
+
 /** Resolves true when the window may close (saved, discarded or nothing to save). */
 async function confirmClose(): Promise<boolean> {
   if (!isDirty()) return true
@@ -406,6 +432,12 @@ const BLOCKS = new Set(BLOCK_COMMANDS)
 const INLINE = new Set(INLINE_COMMANDS)
 
 async function run(command: string) {
+  const table = /^table:(\d+):(\d+)$/.exec(command)
+  if (table) {
+    if (mode === 'source') source.table(sourceEl, +table[1], +table[2])
+    else editor.insertTable(+table[1], +table[2])
+    return scheduleRefresh()
+  }
   if (BLOCKS.has(command)) {
     if (mode === 'source') source.block(sourceEl, command as BlockCommand)
     else editor.block(command as BlockCommand)
@@ -426,11 +458,8 @@ async function run(command: string) {
     case 'settings': return settingsDialog.open()
     case 'toggle_sidebar': return sidebar.toggle('files')
     case 'outline': return sidebar.toggle('outline')
-    case 'add_folder': {
-      const dir = await workspace.pickFolder()
-      if (dir) await workspace.addRecentFolder(dir)
-      return sidebar.show('files')
-    }
+    case 'add_folder': return sidebar.openFolder()
+    case 'export_pdf': return exportPdf()
     case 'undo': return mode === 'source' ? void document.execCommand('undo') : editor.undo()
     case 'redo': return mode === 'source' ? void document.execCommand('redo') : editor.redo()
     case 'zoom_in': zoom = Math.min(2, +(zoom + 0.1).toFixed(2)); return applyZoom()

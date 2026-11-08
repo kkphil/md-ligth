@@ -25,7 +25,9 @@ reines Markdown, das Typora, Obsidian und GitHub verstehen.
 - [Tastenkürzel](#tastenkürzel)
 - [Oberfläche](#oberfläche)
 - [Dateien öffnen und speichern](#dateien-öffnen-und-speichern)
+- [Tabellen](#tabellen)
 - [Bilder](#bilder)
+- [PDF-Export](#pdf-export)
 - [Einstellungen](#einstellungen)
 - [Quick Look: Vorschau mit der Leertaste](#quick-look-vorschau-mit-der-leertaste)
 - [Fehlerbehebung](#fehlerbehebung)
@@ -123,6 +125,7 @@ md-light formatiert, während du tippst, ähnlich wie Typora und Notion.
 | `$E=mc^2$` | LaTeX-Formel im Text |
 | `$$` + Enter | LaTeX-Formelblock |
 | `\| Name \| Alter \|` + Enter | Tabelle mit diesen Spalten |
+| `/table 3:5` | Tabelle mit 3 Spalten und 5 Zeilen |
 | `---` | Trennlinie |
 | `![alt](bild.png)` | Bild |
 | `[TOC]` | Klickbares Inhaltsverzeichnis |
@@ -141,6 +144,10 @@ und deutsche Begriffe, etwa `/tabelle` oder `/formel`.
 - Formeln zeigen ihren LaTeX-Quelltext mit Live-Vorschau, solange der Cursor
   darin steht, und sonst die fertige Formel.
 - Backspace am Anfang einer Überschrift macht sie wieder zu normalem Text.
+- Inline-Formeln zeigen ihren Quelltext auch, solange der Cursor direkt
+  daneben steht, damit er nie neben gerenderter Mathematik „hängt“.
+- Aus Formel- und Codeblöcken kommst du mit **zweimal Enter** am Ende,
+  mit **⌘↩** oder mit **↓** in der letzten Zeile heraus.
 - ⌘-Klick öffnet einen Link, ⌘K bearbeitet ihn.
 - **⌘/** schaltet jederzeit in den Markdown-Quelltext und zurück.
 
@@ -152,6 +159,8 @@ und deutsche Begriffe, etwa `/tabelle` oder `/formel`.
 | --- | --- |
 | ⌘N / ⌘O | Neues Fenster / Datei öffnen |
 | ⌘S / ⇧⌘S | Speichern / Speichern unter |
+| ⇧⌘E | Als PDF exportieren |
+| ⇧⌘O | Ordner öffnen (in der Seitenleiste anheften) |
 | ⌘W / ⌘Q | Fenster schließen / md-light beenden |
 | ⌘/ | Quelltext-Modus umschalten |
 | ⌘1 … ⌘6, ⌘0 | Überschrift 1–6, normaler Absatz |
@@ -183,14 +192,20 @@ und deutsche Begriffe, etwa `/tabelle` oder `/formel`.
 
 ### Seitenleiste (⇧⌘L)
 
-- Zeigt automatisch **alle Ordner, in denen du Dateien geöffnet oder
-  gespeichert hast**. Sie lassen sich aufklappen und zeigen Unterordner und
-  Markdown-Dateien.
-- **+** am Ordner legt dort sofort eine neue Datei an: Name tippen, Enter.
-- **×** entfernt einen Ordner aus der Liste. Auf der Festplatte wird nichts gelöscht.
-- **+ Add Folder…** fügt einen beliebigen Ordner hinzu.
-- Ein Klick auf eine Datei öffnet sie im selben Fenster.
-- Die Breite lässt sich am Rand ziehen. md-light merkt sich Zustand und aufgeklappte Ordner.
+Die Seitenleiste hat zwei Bereiche:
+
+- **Recent:** einzeln geöffnete Dateien, die neueste oben. Eine Datei zu
+  öffnen fügt *nicht* ihren ganzen Ordner hinzu. **×** nimmt eine Datei aus
+  der Liste.
+- **Folders:** Ordner, die du bewusst öffnest, mit **File → Open Folder…**
+  (⇧⌘O) oder dem **+** neben „Folders“. Sie bleiben dauerhaft in der
+  Seitenleiste, auch nach dem Beenden der App. Ordner lassen sich aufklappen
+  und zeigen Unterordner und Markdown-Dateien.
+  - **+** am Ordner legt dort sofort eine neue Datei an: Name tippen, Enter.
+  - **×** entfernt den Ordner aus der Seitenleiste. Auf der Festplatte wird nichts gelöscht.
+
+Ein Klick auf eine Datei öffnet sie im selben Fenster. Die Breite lässt sich
+am Rand ziehen. md-light merkt sich Zustand und aufgeklappte Ordner.
 
 ### Gliederung (⇧⌘1)
 
@@ -212,10 +227,30 @@ Alle Überschriften des Dokuments. Ein Klick springt an die Stelle.
 
 ---
 
+## Tabellen
+
+- **Feste Größe:** `/table 3:5` erzeugt eine Tabelle mit **3 Spalten und 5
+  Zeilen**. Die Kopfzeile zählt als erste Zeile. `3x5` und `/tabelle 3:5`
+  gehen auch.
+- **Aus Spaltennamen:** `| Name | Alter |` + Enter.
+- **Größe ändern:** Steht der Cursor in einer Tabelle, erscheint darüber eine
+  Leiste:
+  - **+ Row / + Column:** Zeile darunter bzw. Spalte rechts einfügen
+  - **− Row / − Column:** aktuelle Zeile bzw. Spalte löschen
+  - **3 × 5 ▾:** Größe im Raster wählen oder Spalten und Zeilen genau eintippen.
+    Vorhandener Inhalt bleibt erhalten.
+  - **Delete:** Tabelle entfernen
+- **Tab** springt zur nächsten Zelle und fügt in der letzten Zelle eine neue
+  Zeile an. **⌘↩** fügt eine Zeile unter dem Cursor ein.
+
+---
+
 ## Bilder
 
 Bilder kannst du auf drei Wegen einfügen: Screenshots aus der Zwischenablage
-(⌘V), Dateien ins Fenster ziehen oder **⇧⌘I**. Wohin sie kopiert werden,
+(⌘V), Dateien ins Fenster ziehen oder **⇧⌘I**. Jedes Bild bekommt eine eigene
+Zeile, und der Cursor steht danach in der Zeile darunter, sodass du direkt
+weiterschreiben kannst. Wohin die Bilder kopiert werden,
 legst du in den Einstellungen unter **When Insert…** fest, wie in Typora:
 
 | Option | Ergebnis |
@@ -232,6 +267,16 @@ Zusätzlich:
 - **Use relative path if possible:** Pfade relativ zur Markdown-Datei speichern.
 - Ein Eintrag `typora-copy-images-to: ./pfad` in der Front Matter hat Vorrang vor der Einstellung.
 - Ist ein neues Dokument noch nicht gespeichert, fragt md-light zuerst nach dem Speicherort, weil der Bildordner relativ zur Datei liegt.
+
+---
+
+## PDF-Export
+
+**File → Export as PDF…** (⇧⌘E) speichert das Dokument als PDF, so wie es im
+Editor aussieht: mit Formeln, Tabellen, Code, Diagrammen und Bildern, auf
+Seiten im Papierformat deines Macs (z. B. A4) verteilt und immer hell, auch im Dunkelmodus. Titelleiste,
+Seitenleiste und Cursor erscheinen nicht im PDF. Danach zeigt „Show in
+Finder“ die Datei.
 
 ---
 

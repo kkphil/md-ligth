@@ -1,6 +1,6 @@
 /**
  * Folders and files for the sidebar and the title popover: listing, creating,
- * renaming/moving, and the list of folders the user worked in.
+ * renaming/moving, the folders the user pinned and the files opened recently.
  *
  * In the browser (`npm run dev`) there is no file system; `?demo` provides an
  * in-memory one so the sidebar can be tried out.
@@ -14,7 +14,10 @@ import { memfs, native } from './platform'
 export interface DirEntry { name: string; path: string; dir: boolean }
 
 const MD = /\.(md|markdown|mdown|mkd|txt)$/i
-const RECENT_KEY = 'mdl-recent-folders'
+
+/** "folders": pinned by the user, kept until removed. "files": recently opened, newest first. */
+export type PathKind = 'folders' | 'files'
+const MAX_RECENT_FILES = 20
 
 function memList(dir: string): DirEntry[] {
   const prefix = `${dir.replace(/\/$/, '')}/`
@@ -30,19 +33,18 @@ function memList(dir: string): DirEntry[] {
   return [...seen.values()].sort((a, b) => Number(b.dir) - Number(a.dir) || a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
 }
 
-function memRecent(): string[] {
+function memLoad(kind: PathKind): string[] {
   try {
-    const stored = JSON.parse(localStorage.getItem(RECENT_KEY) ?? 'null')
+    const stored = JSON.parse(localStorage.getItem(`mdl-${kind}`) ?? 'null')
     if (Array.isArray(stored)) return stored
   } catch { /* ignore */ }
-  return memfs.size ? ['/demo/Notes', '/demo/Uni'] : []
+  return kind === 'folders' && memfs.size ? ['/demo/Notes', '/demo/Uni'] : []
 }
 
-const recentListeners = new Set<(folders: string[]) => void>()
-function memSetRecent(folders: string[]) {
-  try { localStorage.setItem(RECENT_KEY, JSON.stringify(folders)) } catch { /* ignore */ }
-  recentListeners.forEach((cb) => cb(folders))
-  return folders
+const listeners: Record<PathKind, Set<(paths: string[]) => void>> = { folders: new Set(), files: new Set() }
+function memSave(kind: PathKind, paths: string[]) {
+  try { localStorage.setItem(`mdl-${kind}`, JSON.stringify(paths)) } catch { /* ignore */ }
+  listeners[kind].forEach((cb) => cb(paths))
 }
 
 export const workspace = {
@@ -70,31 +72,45 @@ export const workspace = {
     memfs.delete(from)
   },
 
-  async recentFolders(): Promise<string[]> {
-    if (native) return invoke<string[]>('recent_folders')
-    return memRecent()
+  async list(kind: PathKind): Promise<string[]> {
+    if (native) return invoke<string[]>('list_paths', { kind })
+    return memLoad(kind)
   },
 
-  async addRecentFolder(dir: string): Promise<void> {
+  /** Pins a folder, or records a file as recently opened. */
+  async add(kind: PathKind, path: string): Promise<void> {
     if (native) {
-      await invoke('add_recent_folder', { dir })
+      await invoke('add_path', { kind, path })
       return
     }
-    const list = memRecent()
-    if (list[0] !== dir) memSetRecent([dir, ...list.filter((d) => d !== dir)].slice(0, 30))
+    const list = memLoad(kind)
+    if (kind === 'folders') {
+      if (!list.includes(path)) memSave(kind, [...list, path])
+    } else if (list[0] !== path) {
+      memSave(kind, [path, ...list.filter((p) => p !== path)].slice(0, MAX_RECENT_FILES))
+    }
   },
 
-  async removeRecentFolder(dir: string): Promise<void> {
+  async remove(kind: PathKind, path: string): Promise<void> {
     if (native) {
-      await invoke('remove_recent_folder', { dir })
+      await invoke('remove_path', { kind, path })
       return
     }
-    memSetRecent(memRecent().filter((d) => d !== dir))
+    memSave(kind, memLoad(kind).filter((p) => p !== path))
   },
 
-  onRecentChanged(cb: (folders: string[]) => void) {
-    if (native) void listen<string[]>('recent-changed', (e) => cb(e.payload))
-    else recentListeners.add(cb)
+  /** Keeps a renamed/moved file in the recent list at its place. */
+  async renameRecent(from: string, to: string): Promise<void> {
+    if (native) {
+      await invoke('rename_path', { kind: 'files', from, to })
+      return
+    }
+    memSave('files', memLoad('files').map((p) => (p === from ? to : p)))
+  },
+
+  onChanged(kind: PathKind, cb: (paths: string[]) => void) {
+    if (native) void listen<string[]>(kind === 'folders' ? 'folders-changed' : 'recent-files-changed', (e) => cb(e.payload))
+    else listeners[kind].add(cb)
   },
 
   async pickFolder(): Promise<string | null> {

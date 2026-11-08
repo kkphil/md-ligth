@@ -1,7 +1,7 @@
 /**
- * Collapsible sidebar: every folder the user opened or saved files in (with
- * its Markdown files and subfolders, and a "+" to start a new file there),
- * plus an outline of the open document.
+ * Collapsible sidebar: recently opened files, the folders the user pinned
+ * (with their Markdown files and subfolders, and a "+" to start a new file
+ * there), plus an outline of the open document.
  */
 import { dirname, stem } from './paths'
 import { type DirEntry, folderName, workspace } from './workspace'
@@ -39,16 +39,15 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
   const expanded = new Set(state.expanded)
   const listings = new Map<string, DirEntry[]>()
   let folders: string[] = []
+  let recent: string[] = []
   let creatingIn: string | null = null
 
   el.innerHTML = `
     <div class="sb-tabs">
-      <button type="button" data-tab="files">Folders</button>
+      <button type="button" data-tab="files">Files</button>
       <button type="button" data-tab="outline">Outline</button>
     </div>
-    <div class="sb-panel sb-files"><div class="sb-tree"></div>
-      <button type="button" class="sb-add">+ Add Folder…</button>
-    </div>
+    <div class="sb-panel sb-files"><div class="sb-tree"></div></div>
     <div class="sb-panel sb-outline"></div>
     <div class="sb-resizer" title="Drag to resize"></div>`
   const tree = el.querySelector<HTMLDivElement>('.sb-tree')!
@@ -90,14 +89,14 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
     const current = hooks.currentPath()
     const head = row(depth, `sb-folder${open ? ' open' : ''}${top ? ' top' : ''}`,
       `<span class="sb-chevron">${icons.chevron}</span><span class="sb-icon">${icons.folder}</span><span class="sb-name"></span>
-       <span class="sb-actions"><button type="button" data-act="new" title="New file in this folder">+</button>${top ? '<button type="button" data-act="remove" title="Remove from sidebar">×</button>' : ''}</span>`)
+       <span class="sb-actions"><button type="button" data-act="new" title="New file in this folder">+</button>${top ? '<button type="button" data-act="remove" title="Remove from sidebar (the folder stays on disk)">×</button>' : ''}</span>`)
     head.querySelector('.sb-name')!.textContent = folderName(dir)
     head.title = dir
     head.addEventListener('click', async (e) => {
       const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act
       if (act === 'new') return startCreate(dir)
       if (act === 'remove') {
-        await workspace.removeRecentFolder(dir)
+        await workspace.remove('folders', dir)
         return refresh()
       }
       if (expanded.has(dir)) expanded.delete(dir)
@@ -156,12 +155,64 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
     return out
   }
 
-  function render() {
-    if (!folders.length) {
-      tree.innerHTML = '<p class="sb-hint">Folders you open or save files in appear here.</p>'
-      return
+  function section(title: string, action?: { label: string; title: string; run: () => void }) {
+    const head = document.createElement('div')
+    head.className = 'sb-section'
+    head.innerHTML = '<span></span>'
+    head.firstElementChild!.textContent = title
+    if (action) {
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.textContent = action.label
+      b.title = action.title
+      b.addEventListener('click', action.run)
+      head.append(b)
     }
-    tree.replaceChildren(...folders.flatMap((dir) => renderDir(dir, 0, true)))
+    return head
+  }
+
+  function renderRecent(): HTMLElement[] {
+    if (!recent.length) return []
+    const current = hooks.currentPath()
+    const rows = recent.map((path) => {
+      const r = row(0, `sb-file sb-recent${path === current ? ' current' : ''}`,
+        `<span class="sb-icon">${icons.file}</span><span class="sb-name"></span><span class="sb-where"></span>
+         <span class="sb-actions"><button type="button" data-act="forget" title="Remove from Recent">×</button></span>`)
+      r.querySelector('.sb-name')!.textContent = stem(path)
+      r.querySelector('.sb-where')!.textContent = folderName(dirname(path))
+      r.title = path
+      r.addEventListener('click', async (e) => {
+        if ((e.target as HTMLElement).closest('[data-act=forget]')) {
+          await workspace.remove('files', path)
+          return refresh()
+        }
+        hooks.open(path)
+      })
+      return r
+    })
+    return [section('Recent'), ...rows]
+  }
+
+  function render() {
+    const folderRows = folders.length
+      ? folders.flatMap((dir) => renderDir(dir, 0, true))
+      : [Object.assign(document.createElement('p'), { className: 'sb-hint', textContent: 'Open a folder to keep it here, also after restarting md-light.' })]
+    tree.replaceChildren(
+      ...renderRecent(),
+      section('Folders', { label: '+', title: 'Open Folder… (⇧⌘O)', run: () => void openFolder() }),
+      ...folderRows,
+    )
+  }
+
+  /** Pins a folder to the sidebar (kept across restarts). */
+  async function openFolder(dir?: string | null) {
+    dir ??= await workspace.pickFolder()
+    if (!dir) return
+    await workspace.add('folders', dir)
+    expanded.add(dir)
+    save()
+    if (state.tab !== 'files') show('files')
+    else await refresh()
   }
 
   function startCreate(dir: string) {
@@ -173,12 +224,12 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
 
   /** Re-reads the folder list and every expanded folder. */
   async function refresh() {
-    folders = await workspace.recentFolders()
+    ;[folders, recent] = await Promise.all([workspace.list('folders'), workspace.list('files')])
     await Promise.all([...expanded].map(load))
     render()
   }
 
-  /** Expands the folders leading to `path` and highlights it. */
+  /** Highlights `path`; inside a pinned folder, also expands the folders leading to it. */
   async function reveal(path: string) {
     const dir = dirname(path)
     for (const top of folders) {
@@ -188,8 +239,6 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
         if (d === top) break
       }
     }
-    if (!folders.length || !folders.includes(dir)) folders = await workspace.recentFolders()
-    expanded.add(dir)
     save()
     await refresh()
     tree.querySelector('.sb-file.current')?.scrollIntoView({ block: 'nearest' })
@@ -219,14 +268,6 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
 
   el.querySelectorAll<HTMLButtonElement>('.sb-tabs button').forEach((b) =>
     b.addEventListener('click', () => show(b.dataset.tab as Tab)))
-  el.querySelector('.sb-add')!.addEventListener('click', async () => {
-    const dir = await workspace.pickFolder()
-    if (!dir) return
-    await workspace.addRecentFolder(dir)
-    expanded.add(dir)
-    save()
-    await refresh()
-  })
 
   const resizer = el.querySelector<HTMLDivElement>('.sb-resizer')!
   resizer.addEventListener('pointerdown', (e) => {
@@ -247,8 +288,12 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
     resizer.addEventListener('pointerup', up)
   })
 
-  workspace.onRecentChanged((list) => {
+  workspace.onChanged('folders', (list) => {
     folders = list
+    render()
+  })
+  workspace.onChanged('files', (list) => {
+    recent = list
     render()
   })
   window.addEventListener('focus', () => { if (state.tab === 'files') void refresh() })
@@ -277,6 +322,7 @@ export function createSidebar(el: HTMLElement, hooks: SidebarHooks) {
     show,
     refresh,
     reveal,
+    openFolder,
     refreshOutline: renderOutline,
     tab: () => state.tab,
   }
