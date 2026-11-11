@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
 use tauri::menu::AboutMetadata;
-use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItem, SubmenuBuilder};
+use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItem, SubmenuBuilder, WINDOW_SUBMENU_ID};
 use tauri::ipc::{InvokeBody, Request};
 use tauri::{
     AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, WebviewWindow,
@@ -673,7 +673,15 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .fullscreen()
         .build()?;
 
-    let window = SubmenuBuilder::new(app, "Window").minimize().maximize().build()?;
+    // The id makes Tauri register this as the app's Window menu. macOS then adds
+    // its window tiling commands to it (Fill, Center, Move & Resize, Full Screen
+    // Tile) with their keyboard shortcuts, plus the list of open windows.
+    let window = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window")
+        .minimize()
+        .maximize()
+        .separator()
+        .bring_all_to_front()
+        .build()?;
 
     let menu = MenuBuilder::new(app);
     #[cfg(target_os = "macos")]
