@@ -15,18 +15,46 @@ const LANGUAGE_ALIASES: Record<string, string> = { sh: 'bash', shell: 'bash', zs
 let mermaidSeq = 0
 let mermaidLoader: Promise<typeof import('mermaid').default> | null = null
 
+/** One short line for a failed diagram, e.g. "Parse error on line 5". */
+function mermaidError(err: unknown) {
+  const message = String((err as Error)?.message ?? err)
+  const parse = /(Parse|Lexical) error on line \d+/.exec(message)
+  if (parse) return parse[0]
+  if (/No diagram type detected/i.test(message)) return 'Unknown diagram type'
+  return message.split('\n')[0].replace(/[:.]\s*$/, '')
+}
+
+/** Latest render per preview element, so a slow older render can't overwrite a newer one. */
+const mermaidRuns = new WeakMap<HTMLElement, number>()
+
 async function renderMermaid(target: HTMLElement, source: string) {
+  const run = ++mermaidSeq
+  mermaidRuns.set(target, run)
+  const isCurrent = () => mermaidRuns.get(target) === run
+  const show = (error: string | null, svg = '') => {
+    if (!isCurrent()) return
+    if (error === null) target.innerHTML = svg
+    else target.textContent = error
+    target.classList.toggle('preview-error', error !== null)
+  }
+  if (!source.trim()) return show(null)
+
   mermaidLoader ??= import('mermaid').then((m) => m.default)
   const mermaid = await mermaidLoader
   const dark = document.documentElement.dataset.scheme === 'dark'
-  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default' })
+  // Without suppressErrorRendering mermaid draws its own "Syntax error" graphic.
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: dark ? 'dark' : 'default', suppressErrorRendering: true })
+  const id = `mdl-mermaid-${run}`
   try {
-    const { svg } = await mermaid.render(`mdl-mermaid-${++mermaidSeq}`, source)
-    target.innerHTML = svg
-    target.classList.remove('preview-error')
+    await mermaid.parse(source) // throws on a syntax error, before anything is drawn
+    const { svg } = await mermaid.render(id, source)
+    show(null, svg)
   } catch (err) {
-    target.textContent = String((err as Error)?.message ?? err).split('\n')[0]
-    target.classList.add('preview-error')
+    show(mermaidError(err))
+  } finally {
+    // mermaid renders into a scratch container in <body> (`d` + id) and leaves it
+    // behind when it fails. The finished <svg> carries the plain id, so keep that.
+    document.getElementById(`d${id}`)?.remove()
   }
 }
 
