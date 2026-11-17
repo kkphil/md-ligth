@@ -189,6 +189,22 @@ export const linkInputRule = $inputRule((ctx) =>
     const [, text, href, title] = match
     const mark = linkSchema.type(ctx).create({ href, title: title ?? null })
     return state.tr.replaceWith(start, end, state.schema.text(text, [mark])).removeStoredMark(mark.type)
+}))
+
+/** SingleArrowInputRule */
+export const singleArrowInputRule = $inputRule(() => 
+  new InputRule(/-> $/, (state, _match, start, end) => {
+    if (state.doc.rangeHasMark(start, end, state.schema.marks.inlineCode)) return null
+    if (state.doc.resolve(start).parent.type.name === 'math_inline') return null
+    return state.tr.insertText('→ ', start, end)
+  }))
+
+/** DoubleArrowInputRule */
+export const doubleArrowInputRule = $inputRule(() => 
+  new InputRule(/=> $/, (state, _match, start, end) => {
+    if (state.doc.rangeHasMark(start, end, state.schema.marks.inlineCode)) return null
+    if (state.doc.resolve(start).parent.type.name === 'math_inline') return null
+    return state.tr.insertText('⇒ ', start, end)
   }))
 
 export const markdownExtras = [
@@ -199,4 +215,6 @@ export const markdownExtras = [
   frontMatterSchema,
   calloutsAndToc,
   linkInputRule,
+  singleArrowInputRule,
+  doubleArrowInputRule
 ].flat()
